@@ -1,0 +1,18 @@
+[Unit]
+Description=Crypto Jev analysis dashboard
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=cryptojev
+WorkingDirectory=/opt/crypto-jev
+EnvironmentFile=/opt/crypto-jev/.env
+ExecStart=/opt/crypto-jev/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8082 --workers 1
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/crypto-jev/data
+[Install]
+WantedBy=multi-user.target
