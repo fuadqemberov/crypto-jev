@@ -15,7 +15,7 @@ TYPESAFE_API_KEY=your-key-here
 TYPESAFE_MODEL=jev-latest
 ```
 
-Proqramı yenidən başladın. Açar yalnız serverdə TypeSafe-a göndərilir; HTML, status API, tarixçə və Git-ə daxil edilmir. `.env` Git və Docker build kontekstindən çıxarılıb. Mövcud `crypto` layihəsinə dəyişiklik edilmir.
+Proqramı yenidən başladın. Açar yalnız serverdə TypeSafe-a göndərilir; HTML, status API, tarixçə və Git-ə daxil edilmir. `.env` Git-ə daxil edilmir. Mövcud `crypto` layihəsinə dəyişiklik edilmir.
 
 ## Linux / macOS
 
@@ -31,18 +31,11 @@ cp .env.example .env
 
 Bir proses/worker işlədin. Çoxsaylı worker və ya `--reload` ayrıca skanlar və əlavə API xərci yarada bilər. 8082 portu mövcud tətbiqlərlə paralel istifadə üçündür.
 
-## Docker
+## İstəyə bağlı server xidməti
 
-```bash
-cp .env.example .env
-# Açarı və parametrləri .env-ə yazın
-docker compose up -d --build
-docker compose logs -f
-```
+Lokal istifadə üçün bu bölməyə ehtiyac yoxdur; `run.cmd` kifayətdir.
 
-Panel hostda yalnız `127.0.0.1:8082`-yə açılır. Tarixçə persistent named volume-da qalır. `docker compose down -v` həmin məlumatları silər. Uzaqdan giriş üçün SSH tuneli və ya HTTPS reverse proxy istifadə edin. Public reverse proxy qurmazdan əvvəl **DASHBOARD_USER və DASHBOARD_PASSWORD** təyin edin; HTTP Basic yalnız HTTPS üzərində istifadə edilməlidir. Lokal konfiqurasiyada autentifikasiya söndürülüb.
-
-`deploy/crypto-jev.service` systemd nümunəsidir: əvvəl `cryptojev` sistem istifadəçisini, `/opt/crypto-jev`, `.venv` və yazı icazəli `data` qovluğunu yaradın. `.env`-i həmin istifadəçinin oxuya bildiyi `0600` icazəsi ilə saxlayın. Sonra service faylını `/etc/systemd/system/`-ə yerləşdirib `sudo systemctl daemon-reload` və `sudo systemctl enable --now crypto-jev` icra edin. Docker və systemd-dən yalnız birini seçin. Bu repo serverə avtomatik deploy etmir.
+`deploy/crypto-jev.service` systemd nümunəsidir: əvvəl `cryptojev` sistem istifadəçisini, `/opt/crypto-jev`, `.venv` və yazı icazəli `data` qovluğunu yaradın. `.env`-i həmin istifadəçinin oxuya bildiyi `0600` icazəsi ilə saxlayın. Sonra service faylını `/etc/systemd/system/`-ə yerləşdirib `sudo systemctl daemon-reload` və `sudo systemctl enable --now crypto-jev` icra edin. Bu repo serverə avtomatik deploy etmir.
 
 ## Analiz axını
 
