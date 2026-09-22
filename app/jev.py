@@ -31,7 +31,12 @@ QUESTIONS = {
         'overextension': 'Price is extended from its moving average or RSI is extreme.',
         'conflicting_evidence': 'Conflicting or insufficient evidence dominates.'}),
 }
-PROMPT_VERSION = '2'
+POSITION_QUESTIONS = {
+    'position_action': choice('Assess the supplied existing position against the current market context. Choose CLOSE only when the thesis is invalidated or reversal risk justifies exiting. Choose HOLD when evidence is insufficient or the thesis remains intact. Never calculate prices, change leverage or remove a stoploss.', {
+        'HOLD': 'Keep the existing position under its independent protective stop.',
+        'CLOSE': 'Exit the existing position because its thesis has materially deteriorated.'}),
+}
+PROMPT_VERSION = '3'
 
 
 
@@ -39,13 +44,14 @@ class JevError(Exception):
     pass
 
 
-def parse_response(data):
+def parse_response(data, questions=None):
+    questions = questions or QUESTIONS
     if not isinstance(data, dict) or not isinstance(data.get('model'), str) or not data['model']:
         raise JevError('Jev cavabında model yoxdur.')
     answers = data.get('answers')
     if not isinstance(answers, dict):
         raise JevError('Jev cavabı etibarsızdır.')
-    for name, question in QUESTIONS.items():
+    for name, question in questions.items():
         a = answers.get(name)
         if not isinstance(a, dict) or a.get('type') != 'choice' or a.get('choice') not in question['criteria']:
             raise JevError('Jev qərar strukturu etibarsızdır.')
@@ -57,7 +63,7 @@ def parse_response(data):
         if abs(sum(p.values()) - 1) > .001 or p[a['choice']] < max(p.values()) - .000001:
             raise JevError('Jev ehtimal bölgüsü uyğunsuzdur.')
     # Whitelist fields so upstream text cannot leak into logs/UI or state.
-    return dict(model=data['model'], answers={k: {field: answers[k][field] for field in ('type', 'choice', 'confidence', 'probabilities')} for k in QUESTIONS})
+    return dict(model=data['model'], answers={k: {field: answers[k][field] for field in ('type', 'choice', 'confidence', 'probabilities')} for k in questions})
 
 
 class Jev:
@@ -67,11 +73,12 @@ class Jev:
     async def evaluate(self, state):
         if not self.settings.api_key:
             raise JevError('TYPESAFE_API_KEY təyin edilməyib.')
+        questions = {**QUESTIONS, **POSITION_QUESTIONS} if state.get('position') else QUESTIONS
         for attempt in range(3):
             try:
                 r = await self.client.post('https://api.typesafe.ai/v1/systemone',
                     headers={'Authorization': 'Bearer ' + self.settings.api_key},
-                    json={'model': self.settings.model, 'state': state, 'questions': QUESTIONS})
+                    json={'model': self.settings.model, 'state': state, 'questions': questions})
                 if r.status_code in (429, 529, 502, 503, 504) and attempt < 2:
                     # Honor Retry-After; abandon this scan rather than retry too early.
                     try:
@@ -86,7 +93,7 @@ class Jev:
                     raise JevError('Jev API açarı və ya giriş icazəsi etibarsızdır.')
                 if r.is_error:
                     raise JevError(f'Jev xidməti HTTP {r.status_code} qaytardı.')
-                return parse_response(r.json())
+                return parse_response(r.json(), questions)
             except (httpx.HTTPError, ValueError) as e:
                 raise JevError('Jev cavabı alınmadı; siqnal WAIT olaraq saxlanıldı.') from e
         raise JevError('Jev sorğu limiti.')

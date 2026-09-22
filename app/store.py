@@ -8,6 +8,7 @@ class Store:
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.execute('CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)')
+        self.db.execute('CREATE TABLE IF NOT EXISTS controls (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         self.db.commit()
 
     def append(self, value):
@@ -20,3 +21,11 @@ class Store:
 
     def close(self):
         self.db.close()
+
+    def paused(self):
+        row = self.db.execute("SELECT value FROM controls WHERE key='paused'").fetchone()
+        return row is not None and row[0] == 'true'
+
+    def set_paused(self, paused):
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO controls VALUES ('paused', ?)", ('true' if paused else 'false',))

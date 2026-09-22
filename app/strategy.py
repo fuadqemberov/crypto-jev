@@ -62,4 +62,4 @@ def research_levels(snapshot, direction):
     cost_to_stop = .0008 * (entry + stop)
     return dict(entry=entry, stop=stop, target=target, gross_rr=2.,
                 net_rr=(2 * risk - cost_to_target) / (risk + cost_to_stop),
-                note='Tədqiqat səviyyələri; icra/order yoxdur. Funding ödənişləri daxil deyil.')
+                note='İndikativ plan; Freqtrade əlavə icra yoxlaması tətbiq edir. Funding R:R hesabına daxil deyil.')

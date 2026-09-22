@@ -25,10 +25,11 @@ def create_app(settings=None, start_worker=True):
             app.state.manual_task = None
             app.state.last_manual = -float('inf')
             worker = asyncio.create_task(app.state.engine.run()) if start_worker else None
+            telemetry = asyncio.create_task(app.state.engine.execution.run()) if start_worker else None
             try:
                 yield
             finally:
-                for task in (worker, app.state.manual_task):
+                for task in (worker, telemetry, app.state.manual_task):
                     if task:
                         task.cancel()
                         with suppress(asyncio.CancelledError):
@@ -40,7 +41,12 @@ def create_app(settings=None, start_worker=True):
 
     @app.middleware('http')
     async def protect(request: Request, call_next):
-        if settings.user:
+        bridge_request = request.url.path == '/api/execution/signals'
+        if bridge_request:
+            expected = 'Bearer ' + settings.bridge_token
+            if not settings.bridge_token or not secrets.compare_digest(request.headers.get('Authorization', '').encode(), expected.encode()):
+                return JSONResponse({'detail': 'Bridge token tələb olunur.'}, status_code=401)
+        elif settings.user:
             try:
                 credentials = await basic(request)
             except HTTPException:
@@ -79,6 +85,18 @@ def create_app(settings=None, start_worker=True):
     @app.get('/api/history')
     async def history():
         return app.state.engine.store.history()
+
+    @app.get('/api/execution/signals')
+    async def signals():
+        engine = app.state.engine
+        return engine.execution.signals(engine.rows.values(), engine.storage_error)
+
+    @app.post('/api/execution/{action}')
+    async def control(action: str):
+        if action not in ('pause', 'resume'):
+            raise HTTPException(404)
+        app.state.engine.store.set_paused(action == 'pause')
+        return {'paused': action == 'pause'}
 
     @app.post('/api/scan', status_code=202)
     async def scan():

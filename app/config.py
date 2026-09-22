@@ -1,5 +1,6 @@
 import os
 import re
+from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from pathlib import Path
 from dotenv import load_dotenv
@@ -18,6 +19,11 @@ class Settings:
     user: str = ''
     password: str = field(default='', repr=False)
     demo: bool = False
+    bridge_token: str = field(default='', repr=False)
+    signal_ttl: int = 120
+    freqtrade_url: str = 'http://127.0.0.1:8083'
+    freqtrade_user: str = ''
+    freqtrade_password: str = field(default='', repr=False)
 
     def __post_init__(self):
         if not self.symbols or len(self.symbols) > 20 or any(not re.fullmatch(r'[A-Z0-9]{3,20}USDT', s) for s in self.symbols):
@@ -28,6 +34,15 @@ class Settings:
             raise ValueError('Risk parametrləri etibarsızdır.')
         if bool(self.user) != bool(self.password):
             raise ValueError('DASHBOARD_USER və DASHBOARD_PASSWORD birlikdə verilməlidir.')
+        if self.bridge_token and len(self.bridge_token) < 32:
+            raise ValueError('BRIDGE_TOKEN minimum 32 simvol olmalıdır.')
+        if not 30 <= self.signal_ttl <= 300:
+            raise ValueError('SIGNAL_TTL_SECONDS 30–300 olmalıdır.')
+        url = urlparse(self.freqtrade_url)
+        if url.scheme != 'http' or url.hostname not in ('127.0.0.1', 'localhost', '::1') or url.username or url.password or url.path not in ('', '/') or url.query or url.fragment:
+            raise ValueError('FREQTRADE_URL lokal HTTP ünvanı olmalıdır.')
+        if bool(self.freqtrade_user) != bool(self.freqtrade_password):
+            raise ValueError('Freqtrade istifadəçi və parolu birlikdə verilməlidir.')
 
     @classmethod
     def load(cls):
@@ -38,4 +53,7 @@ class Settings:
                    min_confidence=float(os.getenv('MIN_AI_CONFIDENCE', '.85')), max_spread=float(os.getenv('MAX_SPREAD_BPS', '15')),
                    max_funding=float(os.getenv('MAX_FUNDING_RATE', '.0003')), data_dir=Path(os.getenv('DATA_DIR', 'data')),
                    user=os.getenv('DASHBOARD_USER', ''), password=os.getenv('DASHBOARD_PASSWORD', ''),
-                   demo=os.getenv('DEMO_MODE', 'false').lower() == 'true')
+                   demo=os.getenv('DEMO_MODE', 'false').lower() == 'true',
+                   bridge_token=os.getenv('BRIDGE_TOKEN', ''), signal_ttl=int(os.getenv('SIGNAL_TTL_SECONDS', '120')),
+                   freqtrade_url=os.getenv('FREQTRADE_URL', 'http://127.0.0.1:8083'),
+                   freqtrade_user=os.getenv('FREQTRADE_USER', ''), freqtrade_password=os.getenv('FREQTRADE_PASSWORD', ''))

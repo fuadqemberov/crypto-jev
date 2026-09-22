@@ -10,3 +10,8 @@ data/
 *.db*
 dist/
 build/
+user_data/config*.json
+user_data/logs/
+user_data/data/
+user_data/backtest_results/
+*.sqlite*

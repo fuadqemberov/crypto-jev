@@ -1,102 +1,180 @@
-# Crypto Jev
+# Crypto Jev · Freqtrade Paper Lab
 
-Python + FastAPI ilə Azərbaycan dilində kripto analiz paneli. Binance USD-M bazar məlumatlarını deterministik indikatorlarla hesablayır, TypeSafe **Jev** modelindən strukturlaşdırılmış qiymətləndirmələr alır və Jev-in seçdiyi `LONG / SHORT / WAIT` tədqiqat siqnalını göstərir. **Əsas qərarverən Jev-dir.**
+**JEV qərar verir, Python riskləri yoxlayır, Freqtrade virtual əməliyyatları icra edir.**
+Azərbaycan dilində mövcud FastAPI paneli saxlanılıb; ayrıca Freqtrade prosesi ilə iki istiqamətli inteqrasiya əlavə olunub.
 
-**Real və virtual order icrası yoxdur. API açarı olmadıqda texniki analiz işləyir, yekun qərar WAIT qalır.** Jev confidence və diaqnostik texniki bal qazanc ehtimalı deyil. Gəlirlilik və strategiyanın əlavə proqnoz gücü backtest/out-of-sample sınaqla təsdiqlənməyib.
+> Bu versiya yalnız **paper trading** üçündür. Başlanğıc hesab **2,000 USDT**, maksimum **5 mövqe**, leverage **1×**.
+> Gəlirlilik sübut edilməyib. JEV confidence qazanc ehtimalı deyil. Real pul və exchange API açarı lazım deyil.
 
-## Windows — sürətli başlanğıc
+## Niyə Python?
 
-Python 3.11+ (3.12 tövsiyə edilir) quraşdırın. Reponu klonlayın və ya ZIP olaraq açın. Layihə qovluğunda `run.cmd` işlədin. İlk dəfə asılılıqlar və `.env` hazırlanır. Panel: **http://127.0.0.1:8082**.
+Freqtrade-in native strategiya interfeysi və mövcud layihə Python-dadır. Əsas gecikmə şəbəkə/JEV sorğularıdır.
+Rust-a keçmək model cavabını sürətləndirmir, əlavə servis və sinxronizasiya riski yaradır.
+İki bazar paralel analiz edilir; Binance üçün ümumi rate limiter saxlanılır.
+Freqtrade JEV-ni gözləmir: ayrı thread yalnız lokal, artıq hazırlanmış siqnalları oxuyur. SL/TP Freqtrade dövrəsində qalır.
+Bu HFT deyil: analiz 15m/1h/4h kontekstlidir, Freqtrade 1m şam və təxminən 5 saniyəlik dövrə istifadə edir.
 
-Jev-i aktivləşdirmək üçün lokal `.env` faylında:
+## Windows — Docker olmadan
 
-```dotenv
-TYPESAFE_API_KEY=your-key-here
-TYPESAFE_MODEL=jev-latest
-```
+1. Python **3.12**, Git və internet bağlantısı tələb olunur.
+2. Reponu klonlayın və `run-paper.cmd` işlədin. Skript virtual mühit, asılılıqlar və lokal bağlantı konfiqurasiyası yaradır.
+3. Lokal `.env` faylında `TYPESAFE_API_KEY=...` yazın. Açarı Git-ə və ya söhbətə göndərməyin.
+4. Dashboard prosesini yenidən başladın. Panel: **http://127.0.0.1:8082**.
 
-Proqramı yenidən başladın. Açar yalnız serverdə TypeSafe-a göndərilir; HTML, status API, tarixçə və Git-ə daxil edilmir. `.env` Git-ə daxil edilmir. Mövcud `crypto` layihəsinə dəyişiklik edilmir.
+`run-paper.cmd` dashboard üçün ayrıca pəncərə, Freqtrade üçün cari terminal açır.
+İkinci dəfə başlamazdan əvvəl köhnə prosesləri dayandırın. İlk startda API açarı yoxdursa əməliyyat açılmır.
+Mövcud virtual balans və əməliyyat bazası restartda sıfırlanmır. Lokal işləmək üçün hər iki proses açıq qalmalıdır.
+Python/TA-Lib quraşdırılması Windows-da problem yaradarsa WSL2 alternativdir; Docker tələb deyil.
 
-## Linux / macOS
+Yalnız əvvəlki analiz paneli üçün `run.cmd` hələ də işləyir; Freqtrade olmadan order icrası yoxdur.
+
+## Linux / macOS — iki terminal
 
 ```bash
 git clone https://github.com/fuadqemberov/crypto-jev.git
 cd crypto-jev
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.lock
-cp .env.example .env
-# .env faylını redaktə edin
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e '.[paper,test]'
+.venv/bin/python -m app.paper
+# .env daxilində TYPESAFE_API_KEY əlavə edin.
+```
+
+Terminal 1:
+
+```bash
 .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8082 --workers 1
 ```
 
-Bir proses/worker işlədin. Çoxsaylı worker və ya `--reload` ayrıca skanlar və əlavə API xərci yarada bilər. 8082 portu mövcud tətbiqlərlə paralel istifadə üçündür.
+Terminal 2, eyni repo qovluğunda:
 
-## İstəyə bağlı server xidməti
+```bash
+.venv/bin/python -m freqtrade trade --config user_data/config.paper.json --strategy-path user_data/strategies
+```
 
-Lokal istifadə üçün bu bölməyə ehtiyac yoxdur; `run.cmd` kifayətdir.
+`python -m app.paper` unikal bağlantı tokeni və Freqtrade API parolu yaradır.
+Mövcud `.env` API açarını saxlayır; mövcud `config.paper.json` üzərinə yazmır.
+İki tətbiq eyni lokal maşında işləməlidir. Freqtrade **2026.8** versiyasına pin olunub.
+Setup-dan sonra `SYMBOLS` dəyişərsə Freqtrade config-də `exchange.pair_whitelist` də uyğunlaşdırılmalıdır.
 
-`deploy/crypto-jev.service` systemd nümunəsidir: əvvəl `cryptojev` sistem istifadəçisini, `/opt/crypto-jev`, `.venv` və yazı icazəli `data` qovluğunu yaradın. `.env`-i həmin istifadəçinin oxuya bildiyi `0600` icazəsi ilə saxlayın. Sonra service faylını `/etc/systemd/system/`-ə yerləşdirib `sudo systemctl daemon-reload` və `sudo systemctl enable --now crypto-jev` icra edin. Bu repo serverə avtomatik deploy etmir.
+## Komponentlər və məlumat axını
 
-## Analiz axını
+| Komponent | Məsuliyyət |
+|---|---|
+| `app/market.py`, `indicators.py` | Binance USD-M, təzə bid/ask/mark, bağlanmış 15m/1h/4h şamlar və indikatorlar |
+| `app/jev.py` | TypeSafe System One API; istiqamət, rejim, momentum, risk, driver və açıq mövqe üçün HOLD/CLOSE |
+| `app/engine.py` | Maksimum iki paralel analiz, cache, təhlükəsizlik filtrləri və tarixçə |
+| `app/execution.py` | Tokenlə qorunan siqnal yayımı; Freqtrade-dən yalnız GET ilə hesab/mövqe məlumatı |
+| `user_data/strategies/JevBridgeStrategy.py` | Yeganə order icraçısı; Freqtrade virtual orderləri, stake, SL/TP və çıxışlar |
+| `app/static/` | Azərbaycan dilində radar, JEV cavabları, balans, margin, PnL və trade tarixçəsi |
 
-1. BTC, ETH, SOL, BNB, XRP üçün 15m / 1h / 4h üzrə 301 şam sorğulanır. `SYMBOLS` ilə 1–20 USDT simvolu seçilə bilər.
-2. Yalnız bağlanmış, ardıcıl, etibarlı və təzə şamlar qəbul edilir; minimum 250 şam tələb olunur. Son şam ən çox bir period + 30 saniyə əvvəl bağlanmış olmalıdır. Bid/ask və mark yaşı maksimum 60 saniyədir.
-3. EMA20/50/200 (SMA seed), Wilder RSI14/ATR14, MACD12/26/9, əvvəlki 20 şama görə relative volume və iki sağ/iki sol şamla təsdiqlənən 120 şamlıq pivot dəstək/müqaviməti hesablanır. Pivotlar yalnız diaqnostik göstərilir, giriş filtri deyil.
-4. Texniki bal: hər timeframe EMA trendi 15 (cəmi 45), 15m MACD güclənməsi 15, 1h MACD istiqaməti 10, 15m RSI 10, 1h RSI 10, relative volume ≥1.2 üçün 10. Maksimum 100.
-5. Python əvvəlcə trend, momentum, RSI, həcm, volatillik, EMA20 məsafəsi, dəstək/müqavimət yaxınlığı və bazar keyfiyyəti etiketləri hazırlayır. **Texniki bal Jev-ə ötürülmür və qərar həddi kimi istifadə edilmir.**
-6. Jev **direction** sualı ilə 1–4 saatlıq tədqiqat istiqamətini seçir. Model trend davamı, pullback, dönüş və ya qeyri-müəyyənlik haqqında konteksti özü qiymətləndirir. Ayrı **momentum, regime, risk, driver** sualları həmin qərarın AI kontekstini göstərir. `driver` sərbəst mətn izahı deyil, kontekst kateqoriyasıdır; qərara sərt filtr tətbiq etmir.
-7. Yekun LONG/SHORT yalnız Jev həmin istiqaməti seçdikdə mümkündür. Direction/momentum/regime/risk confidence minimum 0.85, momentum istiqaməti uyğun, risk acceptable və regime unclear olmamalıdır. Range və transition avtomatik rədd edilmir. **10/100 texniki bal belə təkbaşına Jev qərarını bloklamır.**
-8. Python istiqaməti seçmir və ya əksinə çevirmir; yalnız risk veto-su tətbiq edir: ATR/qiymət 0.1–5%, markın bağlanışdan maksimum 1 ATR uzaqlığı, spread, funding, RSI 22–78 və xərclərdən sonrakı R:R. Köhnə/etibarsız məlumat və Jev xətası WAIT yaradır.
-9. Panel hər 5 saniyədə cache oxuyur; səhifənin yenilənməsi Jev sorğusu yaratmır. Hər siqnalın xam AI seçimi, confidence və tam ehtimal bölgüsü görünür.
+JEV açıq mövqenin ID, istiqamət və əvvəlcədən hesablanmış mənfəət/zərər vəziyyətini də alır.
+`CLOSE` yalnız həmin trade ID-yə aiddir; köhnə qərar yeni mövqeni bağlaya bilməz.
+`WAIT` “mövcud mövqeni bağla” demək deyil. Hesablamalar/SL/TP rəqəmləri AI-yə həvalə edilmir.
+JEV driver sərbəst düşüncə mətni yox, strukturlaşdırılmış səbəb kateqoriyasıdır.
 
-Təsdiqlənmiş siqnalda indikativ giriş ask/bid, SL 2×ATR, TP 4×ATR-dir. Hər tərəf üçün 0.05% komissiya və 3 bps slippage fərziyyəsi ilə xalis R:R ≥1.5 tələb olunur. Funding rate giriş filtri olsa da, funding settlement bu R:R hesabına daxil deyil. Faktiki exchange fees, fill, liquidation və PnL simulyasiyası yoxdur.
+## İcra və risk qaydaları
 
-Jev confidence cavab bölgüsündən çıxarılan qeyri-müəyyənlik göstəricisidir. Jev qaydaları ziddiyyətli qiymətləndirə bilər; istiqaməti Jev seçir, Python təhlükəsizlik veto-su ilə WAIT edə bilər. Structured output zəmanəti bazar proqnozunun düzgünlüyünə zəmanət deyil.
+- **Yalnız dry-run:** strategiya real ticarət və backtest/hyperopt rejimində başlamır.
+- **Yalnız JEV istiqaməti:** model olmadan, API xətasında və ya demo rejimində giriş yoxdur.
+- **85% confidence:** direction/momentum/regime/risk üçün əvvəlki hədd saxlanılır. Texniki bal təkbaşına giriş şərti deyil.
+- **Siqnalın yaşı:** standart 120 saniyə, bazar snapshot vaxtından hesablanır. Gələcək tarixli və köhnə siqnal rədd edilir.
+- **Təkrarsız giriş:** simvol + istiqamət + bağlanmış 15m şam əsasında ID. Freqtrade-in saxlanmış trade tarixçəsi restartdan sonra təkrar girişi də bloklayır. Trade bazasını silmək bu yaddaşı itirər.
+- **Margin:** Freqtrade-in istifadə oluna bilən ümumi stake kapitalının maksimum 7%-i; 2,000 üçün 140 USDT. Açıq unrealized PnL bu stake bazasına əlavə edilmir.
+- **Mövqe riski:** planlaşdırılmış stop və təxmini round-trip xərc birlikdə kapitalın maksimum 0.5%-i. Buna görə margin bəzən 7%-dən azdır. Bu, gap/slippage zamanı zəmanətli zərər tavanı deyil.
+- **Yeni giriş veto-su:** həmin UTC günündə reallaşmış zərər ilkin virtual hesabın 3%-inə çatarsa girişlər bloklanır. 2,000 üçün 60 USDT. Bu limit açıq zərəri avtomatik bağlamır.
+- **Cooldown:** hər mövqedən sonra 5 dəqiqə; 60 dəqiqədə 3 stop-loss sonrası 30 dəqiqəlik StoplossGuard.
+- **Cari order yoxlaması:** təzə order-book spread maksimum 15 bps; siqnal girişindən qiymət fərqi maksimum 0.3%; xərc sonrası R:R minimum 1.5.
+- **SL/TP:** başlanğıc plan SL 2×ATR, TP 4×ATR. Freqtrade-də müstəqil 5% margin stop fallback-i, plan stop-u, target və maksimum 4 saat saxlama limiti var. Stop sonradan genişləndirilmir.
+- **Fasilə:** paneldə “Girişləri dayandır” diskdə saxlanılır. Yalnız yeni girişlər dayanır; açıq mövqelərin SL/TP, müddət və JEV çıxışları davam edir. Bu, bütün mövqeləri bağlayan emergency düymə deyil.
+- **Disk xətası:** jurnala yazılmayan analiz icraya buraxılmır.
+- **Bağlantı xətası:** təzə Freqtrade telemetry yoxdursa giriş siqnalları bağlanır. Panel köhnə balansı cari məlumat kimi göstərmir.
+
+Stop və target ilkin entry tag-də saxlanılır, restartda bərpa olunur.
+SL/TP bot səviyyəsindədir: Freqtrade prosesi dayansa simulyasiya da dayanır. Exchange üzərində real qoruma iddiası yoxdur.
+Eyni hesabı başqa order icraçısı ilə paylaşmaq bu versiyanın əhatəsində deyil.
+
+## Panel və PnL
+
+- Wallet, sərbəst vəsait və istifadə olunan margin ayrı göstərilir.
+- Reallaşmış və ümumi PnL Freqtrade API-dən oxunur; tətbiq ayrıca uyğunsuz balans hesablamır.
+- Açıq mövqelərdə istiqamət, giriş/cari qiymət, margin, PnL, SL/TP və funding göstərilir.
+- Son 30 trade içindən bağlı əməliyyatlar göstərilir; bütün tarixçə Freqtrade SQLite bazasındadır.
+- 0.05% hər tərəf üçün komissiya konfiqurasiya olunub. Funding Freqtrade-in əldə etdiyi məlumat qədər hesablanır; onu ikinci dəfə PnL-dən çıxmırıq.
+- Dry-run real fill, order-book queue, likvidlik, slippage və faktiki hesab funding-i ilə tam ekvivalent deyil.
+- Risk R:R hesabında hər tərəfə 3 bps slippage fərziyyəsi var; bu, Freqtrade PnL-nə ayrıca məcburi yazılmış xərc deyil.
 
 ## Konfiqurasiya
 
-| Parametr | Standart | Mənası |
-|---|---|---|
-| `TYPESAFE_API_KEY` | boş | Jev açarı; boşdursa AI çağırılmır |
-| `TYPESAFE_MODEL` | `jev-latest` | Alias; cavabdakı faktiki model tarixçədə saxlanır |
-| `SYMBOLS` | BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT | USDT bazarları |
-| `SCAN_SECONDS` | 300 | Skan bitdikdən sonrakı gözləmə; minimum 60 |
-| `MIN_AI_CONFIDENCE` | 0.85 | Qərar/momentum/regime/risk minimum confidence |
-| `MAX_SPREAD_BPS` | 15 | Bid/ask spread limiti |
-| `MAX_FUNDING_RATE` | 0.0003 | Ödəniş istiqamətində funding limiti; 0.03% |
-| `DATA_DIR` | data | SQLite yeri |
-| `DEMO_MODE` | false | Sintetik qiymətlər, AI çağırışı yoxdur |
-| `DASHBOARD_USER`, `DASHBOARD_PASSWORD` | boş | İkisini birlikdə təyin edin |
+| Parametr | Standart / məna |
+|---|---|
+| `TYPESAFE_API_KEY` | Boşdursa JEV çağırılmır və giriş yoxdur |
+| `TYPESAFE_MODEL` | `jev-latest`; faktiki model analiz tarixçəsində saxlanır |
+| `SYMBOLS` | BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT |
+| `SCAN_SECONDS` | Yeni `.env.example` üçün 60; skan bitəndən sonrakı gözləmə |
+| `MIN_AI_CONFIDENCE` | 0.85; gəlirlilik ehtimalı deyil |
+| `MAX_SPREAD_BPS` | Analizdə 15; executor ayrıca maksimum 15 yoxlayır |
+| `MAX_FUNDING_RATE` | Ödəniş istiqamətində 0.0003; funding R:R hesabına daxil deyil |
+| `SIGNAL_TTL_SECONDS` | 120; icra siqnalının maksimum yaşı |
+| `BRIDGE_TOKEN` | Setup yaradır; minimum 32 simvol; frontend-ə ötürülmür |
+| `FREQTRADE_URL` | `http://127.0.0.1:8083`; yalnız lokal HTTP |
+| `FREQTRADE_USER/PASSWORD` | Setup yaradır; dashboard yalnız GET endpoint-ləri oxuyur |
+| `DASHBOARD_USER/PASSWORD` | İkisi birlikdə; uzaq giriş üçün HTTPS autentifikasiyası da tələb olunur |
+| `DEMO_MODE` | `true`: sintetik vizual demo, AI/order yoxdur |
+| `DATA_DIR` | Analiz və pause SQLite bazası, standart `data` |
 
-`DEMO_MODE=true` yalnız paneli oflayn yoxlamaq üçündür; ayrıca `demo.db` istifadə edir, canlı məlumat kimi təqdim edilmir. Şəbəkə xətasında avtomatik demo keçidi yoxdur.
+`Settings`-in env verilməyən fallback scan intervalı geriyə uyğunluq üçün 300 saniyədir.
+Mövcud `.env` intervalı avtomatik dəyişdirilmir; daha tez analiz üçün `SCAN_SECONDS=60` seçə bilərsiniz.
+1–20 simvol dəstəklənir. Çox simvol/uzun AI cavabı bəzi siqnalları vaxtdan sala bilər; təhlükəsizlik üçün TTL-i kor-koranə artırmayın.
+JEV eyni semantik vəziyyət + şam + mövqe konteksti üçün cache edilir; maksimum 200 qeyd, restartda təmizlənir.
 
-Jev eyni semantik vəziyyət və eyni bağlanmış şamlar üçün yaddaşda cache edilir (200 qeyd, restartda təmizlənir). Fərqli vəziyyətlər yeni sorğu yaradır; Jev hesabındakı xərcləri izləyin. Binance sorğuları minimum 400ms aralıdır; 418/429 ümumi cooldown yaradır. Jev müvəqqəti xətalarında maksimum 3 cəhd var. Uzun Retry-After olduqda erkən təkrar əvəzinə növbəti skan gözlənilir. İstifadəçi skanı minimum 60 saniyə aralı başlada bilər.
+## Saxlama və təhlükəsizlik
 
-## Məlumat və API
+- `data/analysis.db`: son 2,000 analiz və davamlı giriş pause vəziyyəti. `demo.db` ayrıdır.
+- `data/freqtrade-paper.sqlite`: Freqtrade wallet/trade tarixçəsi. Virtual nəticələri saxlamaq üçün silməyin.
+- `.env`, `user_data/config.paper.json`, bazalar və loglar Git-ə daxil edilmir.
+- 8082 və 8083 yalnız loopback-də dinləyir. Portları birbaşa internetə açmayın.
+- Token yalnız `/api/execution/signals` üçün keçərlidir, dashboard idarəetmə hüququ vermir.
+- Bir dashboard worker və bir Freqtrade prosesi işlədin. `--reload` istifadə etməyin.
+- Backup üçün prosesləri dayandırıb `data` və lokal config-i təhlükəsiz saxlayın.
+- Mövcud systemd nümunəsi yalnız dashboard üçündür; avtomatik server deploy-u edilmir.
 
-SQLite son **2000 simvol analizi** saxlayır; daha köhnələr avtomatik silinir. Panel son 30 qeydi göstərir, `/api/history` son 100 qeydi qaytarır. Bu, audit/order jurnalı deyil. Backup zamanı proqramı dayandırıb bütün `data` qovluğunu götürün. Cari radar restartdan sonra təzə skanla dolur; tarixçə ayrıca qalır. Köhnəlmiş cari nəticələr `WAIT` göstərilir. Disk xətası paneldə bildirilir.
+## API
 
-- `GET /` — Azərbaycan dilində panel
-- `GET /api/status` — cari analizlər; API açarı daxil deyil
-- `GET /api/history` — analiz tarixçəsi
-- `GET /health` — prosesin işləməsi; upstream xidmətlərin sağlamlığı demək deyil
-- `POST /api/scan` — skan; `X-Crypto-Jev: 1` başlığı tələb olunur
+| Endpoint | Məqsəd |
+|---|---|
+| `GET /api/status` | Radar + sanitizasiya edilmiş Freqtrade telemetry |
+| `GET /api/history` | Son 100 analiz |
+| `GET /api/execution/signals` | Bearer bridge token ilə TTL-li icra siqnalları |
+| `POST /api/execution/pause`, `/resume` | Yeni girişləri dayandır/davam etdir |
+| `POST /api/scan` | Əlavə skan; minimum 60 saniyə interval |
+| `GET /health` | Prosesin işləməsi; upstream sağlamlıq zəmanəti deyil |
 
-## Test
+POST üçün `X-Crypto-Jev: 1` tələb olunur. Cross-site browser POST bloklanır.
+
+## Test və məhdudiyyətlər
 
 ```bash
-.venv/bin/pip install 'pytest>=8,<10'
+.venv/bin/python -m pip install -e '.[paper,test]'
 .venv/bin/python -m pytest -q
+node --check app/static/app.js
 ```
 
-Testlər indikator sərhədləri, açıq/köhnə/boşluqlu şamlar, NaN/inf, LONG/SHORT, aşağı texniki balda belə Jev-in qərar üstünlüyü, Jev HTTP müqaviləsi və cavab yoxlamaları, API xətalarında WAIT, cache, Binance cooldown, SQLite restart, auth və cross-site POST qorumasını yoxlayır. Bunlar gəlirlilik backtest-i deyil. Canlı Jev testi üçün istifadəçinin açarı lazımdır. AI qiymətləndirməsinin proqnoz üstünlüyü hələ ölçülməyib.
+Testlər real Freqtrade 2026.8 strategy resolver/config schema ilə işləyir; exchange/AI cavabları testdə mock edilir.
+UI smoke testi üçün `playwright` və Chromium quraşdırın, dashboard-u `DEMO_MODE=true` ilə başladın və
+`node tests/ui-smoke.cjs` işlədin. UI testindəki balans/əməliyyatlar **fixture**-dir.
 
-## Mənbələr
+**Canlı JEV və Binance ilə uzunmüddətli paper sınağı bu dəyişiklik zamanı edilməyib.**
+Real API açarı olmadan gəlirlilik, siqnal keyfiyyəti və faktiki fill davranışı sübut edilə bilməz.
 
-- [TypeSafe API](https://docs.typesafe.ai/api)
+**Tarixi JEV backtest-i qəsdən bloklanıb.** Bugünkü AI siqnalını keçmiş şamlara tətbiq etmək lookahead bias yaradar.
+Etibarlı backtest üçün vaxt möhürlü tarixi snapshot/AI cavab dataset-i və ayrıca replay strategiyası lazımdır; bu versiyaya daxil deyil.
+JEV-li və JEV-siz strategiyaların müqayisəsi də hələ nəticəsi olan performans hesabatı deyil.
+Bu versiya yoxlanılan inteqrasiya bazasıdır, “zəmanətli qazanc sistemi” deyil.
+
+## Rəsmi mənbələr
+
+- [Freqtrade strategy callbacks](https://www.freqtrade.io/en/stable/strategy-callbacks/)
+- [Freqtrade REST API](https://www.freqtrade.io/en/stable/rest-api/)
+- [Freqtrade leverage](https://www.freqtrade.io/en/stable/leverage/)
+- [TypeSafe System One API](https://docs.typesafe.ai/api)
 - [Jev confidence](https://docs.typesafe.ai/confidence)
-- [Jev məhdudiyyətləri — hesablamaları kodda saxlayın](https://docs.typesafe.ai/model-jaggedness/jev-1.13)
-- [Binance rəsmi futures connector mənbəyi](https://github.com/binance/binance-futures-connector-python)
-- [FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/)
-
-İlham: [Futures Lab](https://github.com/fuadqemberov/crypto). Bu ayrıca Python layihəsidir.
