@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture
 def strategy():
+    init_db('sqlite://')
     config = build_config(Settings(), 'x'*32, 'test', 'test-password')
     config.update(runmode=RunMode.DRY_RUN, user_data_dir=ROOT/'user_data',
                   strategy_path=str(ROOT/'user_data/strategies'))
@@ -29,24 +30,25 @@ def strategy():
     instance.dp = SimpleNamespace(orderbook=lambda pair, depth: {'bids': [[99.995, 1]], 'asks': [[100.005, 1]]})
     yield instance
     instance.executor.shutdown(wait=True, cancel_futures=True)
+    Trade.session.remove()
 
 
 def signal(action='LONG'):
     now = datetime.now(timezone.utc)
-    return dict(id='a'*24, pair='BTC/USDT:USDT', action=action,
+    return dict(id='a'*24, pair='BTC/USDT:USDT', action=action, leverage_requested=1,
                 observed_at=int(now.timestamp()*1000)-100, expires_at=int(now.timestamp()*1000)+120000,
                 levels=dict(entry=100, stop=98 if action=='LONG' else 102, target=104 if action=='LONG' else 96))
 
 
 def load(strategy, value, enabled=True):
     now=datetime.now(timezone.utc)
-    strategy._accept(dict(version=1, mode='dry_run', generated_at=int(now.timestamp()*1000),
+    strategy._accept(dict(version=2, mode='dry_run', generated_at=int(now.timestamp()*1000),
                           entries_enabled=enabled, signals=[value]), now.timestamp()*1000)
     return now
 
 
 def tag(value):
-    return f"jev:{value['id']}:{value['levels']['stop']}:{value['levels']['target']}"
+    return f"jev:{value['id']}:{value['levels']['stop']}:{value['levels']['target']}:{value['leverage_requested']}"
 
 
 def test_real_framework_loads_config_and_dry_only(strategy):
@@ -133,3 +135,54 @@ def test_background_failure_clears_previous_signal(strategy):
     strategy.executor=Mock()
     strategy.bot_loop_start(datetime.now(timezone.utc))
     assert strategy.signals=={} and not strategy.entries_enabled
+
+
+@pytest.mark.parametrize('requested,stop,exchange_max,expected', [(5,98,125,5),(100,98,125,23),(100,99.8,125,100),(100,99.8,20,20)])
+def test_jev_leverage_is_dynamic_and_capped(strategy,requested,stop,exchange_max,expected):
+    value=signal();value['leverage_requested']=requested;value['levels']['stop']=stop
+    now=load(strategy,value)
+    assert strategy.leverage(value['pair'],now,100,1,exchange_max,tag(value),'long')==expected
+
+
+@pytest.mark.parametrize('bad', [None,0,-1,101,True,5.5,float('nan'),'100'])
+def test_invalid_leverage_never_becomes_entry(strategy,bad):
+    value=signal();value['leverage_requested']=bad;load(strategy,value)
+    assert strategy.signals=={}
+
+
+def test_higher_leverage_reduces_margin_with_same_risk_budget(strategy,monkeypatch):
+    value=signal();value['leverage_requested']=20;now=load(strategy,value)
+    monkeypatch.setattr(Trade,'get_trades_proxy',lambda **kw: [])
+    strategy.wallets=SimpleNamespace(get_total_stake_amount=lambda:2000)
+    stake=strategy.custom_stake_amount(value['pair'],now,100,140,1,2000,20,tag(value),'long')
+    assert stake==pytest.approx(10/(.0216*20))
+    assert stake*20*.0216==pytest.approx(10)
+
+
+def test_unlimited_count_uses_numeric_stake_and_preserves_old_trade_plan(strategy):
+    assert strategy.config['max_open_trades']==-1
+    assert isinstance(strategy.config['stake_amount'],(int,float))
+    strategy.executor.shutdown();strategy.executor=Mock()
+    strategy.wallets=SimpleNamespace(get_total_stake_amount=lambda:3000,get_available_stake_amount=lambda:75)
+    strategy.bot_loop_start(datetime.now(timezone.utc))
+    assert strategy.config['stake_amount']==75
+    trade=SimpleNamespace(id=7,enter_tag='jev:old:98:104',is_short=False,leverage=1,open_date_utc=datetime.now(timezone.utc))
+    assert strategy.custom_stoploss('BTC/USDT:USDT',trade,datetime.now(timezone.utc),100,0)==pytest.approx(.02)
+
+
+def test_upgrade_restores_tighter_stop_after_freqtrade_reinitializes(strategy):
+    now=datetime.now(timezone.utc)
+    trade=Trade(pair='BTC/USDT:USDT',exchange='binance',enter_tag='jev:old:90:120',
+                open_rate=100,stake_amount=140,amount=1.4,is_open=True,open_date=now,
+                fee_open=.0005,fee_close=.0005,leverage=1,is_short=False,
+                stop_loss=95,initial_stop_loss=95,initial_stop_loss_pct=-.05,
+                is_stop_loss_trailing=False,price_precision=8,precision_mode_price=2)
+    Trade.session.add(trade);Trade.commit()
+    strategy.preserved_stops={trade.id:95}
+    Trade.stoploss_reinitialization(-.5)
+    assert trade.stop_loss==50
+    strategy.executor.shutdown();strategy.executor=Mock()
+    strategy.wallets=SimpleNamespace(get_total_stake_amount=lambda:2000,get_available_stake_amount=lambda:1860)
+    strategy.bot_loop_start(now)
+    assert trade.stop_loss==95
+    assert strategy.custom_stoploss(trade.pair,trade,now,100,0)==pytest.approx(.05)

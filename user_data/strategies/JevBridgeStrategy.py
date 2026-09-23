@@ -15,13 +15,16 @@ def number(value):
 
 def signal_tag(signal):
     levels = signal['levels']
-    return f"jev:{signal['id']}:{levels['stop']:.12g}:{levels['target']:.12g}"
+    return f"jev:{signal['id']}:{levels['stop']:.12g}:{levels['target']:.12g}:{signal['leverage_requested']}"
 
 
 def trade_plan(trade):
     """The entry plan lives in Freqtrade's persisted enter_tag, not a volatile cache."""
     try:
-        prefix, identity, stop, target = trade.enter_tag.split(':')
+        parts = trade.enter_tag.split(':')
+        if len(parts) not in (4, 5):
+            return None
+        prefix, identity, stop, target = parts[:4]
         stop, target = float(stop), float(target)
         if prefix == 'jev' and identity and all(number(v) and v > 0 for v in (stop, target)):
             return stop, target
@@ -37,7 +40,7 @@ class JevBridgeStrategy(IStrategy):
     process_only_new_candles = False
     startup_candle_count = 2
     minimal_roi = {}
-    stoploss = -0.05  # Maximum margin loss fallback; independent of JEV/network.
+    stoploss = -0.50  # Margin fallback. Leverage cap keeps the ATR plan inside this distance.
     use_custom_stoploss = True
     use_exit_signal = True
     exit_profit_only = False
@@ -55,8 +58,10 @@ class JevBridgeStrategy(IStrategy):
             raise ValueError('JevBridgeStrategy only supports dry_run. No live trading or historical JEV backtest.')
         if self.config.get('trading_mode') != 'futures' or self.config.get('margin_mode') != 'isolated':
             raise ValueError('Isolated futures is required.')
-        if not 1 <= self.config.get('max_open_trades', 0) <= 5:
-            raise ValueError('Maximum five positions are permitted.')
+        if self.config.get('max_open_trades') not in (-1, float('inf')):
+            raise ValueError('Run python -m app.paper --upgrade to remove the position count cap.')
+        if self.stoploss != -.50:
+            raise ValueError('Run python -m app.paper --upgrade to update the leverage-aware stop fallback.')
         bridge = self.config.get('jev_bridge', {})
         url = urlparse(bridge.get('url', ''))
         if url.scheme != 'http' or url.hostname not in ('localhost', '127.0.0.1', '::1') or url.username or url.password or url.path not in ('', '/') or url.query or url.fragment:
@@ -64,6 +69,10 @@ class JevBridgeStrategy(IStrategy):
         if len(bridge.get('token', '')) < 32:
             raise ValueError('A bridge token of at least 32 characters is required.')
         self.bridge = bridge
+        # Freqtrade may reinitialize non-trailing stops when the configured
+        # fallback changes. Keep tighter existing protection across this upgrade.
+        self.preserved_stops = {t.id: t.stop_loss for t in Trade.get_open_trades()
+                                if number(t.stop_loss) and t.stop_loss > 0}
         self.signals = {}
         self.entries_enabled = False
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='jev-bridge')
@@ -84,7 +93,7 @@ class JevBridgeStrategy(IStrategy):
             return response.json()
 
     def _accept(self, payload, now):
-        if (payload.get('version') != 1 or payload.get('mode') != 'dry_run'
+        if (payload.get('version') != 2 or payload.get('mode') != 'dry_run'
                 or not number(payload.get('generated_at'))
                 or not 0 <= now - payload['generated_at'] <= 15000
                 or not isinstance(payload.get('signals'), list)):
@@ -96,6 +105,8 @@ class JevBridgeStrategy(IStrategy):
             if not self._fresh(signal, now) or signal.get('action') not in ('WAIT', 'LONG', 'SHORT'):
                 continue
             if signal['action'] != 'WAIT':
+                if type(signal.get('leverage_requested')) is not int or signal['leverage_requested'] not in (1,2,3,5,10,15,20,25,50,75,100):
+                    continue
                 levels = signal.get('levels', {})
                 if not isinstance(levels, dict) or not all(number(levels.get(k)) and levels[k] > 0 for k in ('entry', 'stop', 'target')):
                     continue
@@ -115,6 +126,14 @@ class JevBridgeStrategy(IStrategy):
                 and 0 < expires - observed <= 300_000)
 
     def bot_loop_start(self, current_time: datetime, **kwargs):
+        if self.preserved_stops:
+            for trade in Trade.get_open_trades():
+                previous = self.preserved_stops.get(trade.id)
+                if previous and trade.open_rate > 0:
+                    reference = min(trade.open_rate, previous * .99) if trade.is_short else max(trade.open_rate, previous * 1.01)
+                    distance = abs(reference - previous) / reference * trade.leverage
+                    trade.adjust_stop_loss(reference, distance)
+            Trade.commit()
         if self.pending is not None and self.pending.done():
             try:
                 self._accept(self.pending.result(), current_time.timestamp() * 1000)
@@ -123,6 +142,16 @@ class JevBridgeStrategy(IStrategy):
             self.pending = None
         if self.pending is None:
             self.pending = self.executor.submit(self._fetch)
+        # Freqtrade forbids unlimited count + unlimited stake. Set a numeric upper
+        # bound before its leverage-tier lookup; the risk callback may reduce it.
+        try:
+            capital = self.wallets.get_total_stake_amount()
+            available = self.wallets.get_available_stake_amount()
+            if not all(number(v) and v > 0 for v in (capital, available)):
+                raise ValueError('Wallet unavailable')
+            self.config['stake_amount'] = min(capital * .07, available)
+        except Exception:
+            self.entries_enabled = False
 
     def _signal(self, pair, current_time):
         signal = getattr(self, 'signals', {}).get(pair)
@@ -186,12 +215,16 @@ class JevBridgeStrategy(IStrategy):
             signal = self._signal(pair, current_time)
             if not self.entries_enabled or not signal or signal['action'].lower() != side or self._daily_loss_hit(current_time):
                 return 0
+            if entry_tag != signal_tag(signal):
+                return 0
             capital = self.wallets.get_total_stake_amount()
-            if not all(number(v) and v > 0 for v in (capital, current_rate, leverage, max_stake)):
+            if not all(number(v) and v > 0 for v in (capital, current_rate, leverage, max_stake, proposed_stake)):
                 return 0
             risk = abs(current_rate - signal['levels']['stop']) / current_rate
+            if (risk + .0016) * leverage > .50:
+                return 0
             # <=7% margin; <=0.5% capital at planned stop including estimated costs.
-            stake = min(capital * .07, capital * .005 / ((risk + .0016) * leverage), max_stake)
+            stake = min(capital * .07, capital * .005 / ((risk + .0016) * leverage), max_stake, proposed_stake)
             return stake if stake >= (min_stake or 0) else 0
         except Exception:
             # Freqtrade falls back to proposed_stake if a callback raises: explicitly return zero.
@@ -199,14 +232,25 @@ class JevBridgeStrategy(IStrategy):
 
     def leverage(self, pair, current_time, current_rate, proposed_leverage, max_leverage,
                  entry_tag, side, **kwargs):
-        return 1.0  # Paper baseline. Do not multiply exposure to compensate for a weak strategy.
+        signal = self._signal(pair, current_time)
+        if not signal or signal['action'].lower() != side or entry_tag != signal_tag(signal):
+            return 1.0  # Entry callbacks reject absent/mismatched decisions.
+        if not all(number(v) and v > 0 for v in (current_rate, max_leverage)):
+            return 1.0
+        distance = abs(current_rate - signal['levels']['stop']) / current_rate
+        # Keep planned price loss + cost below half of margin. This is not an
+        # exact liquidation calculation; Freqtrade additionally applies its buffer.
+        risk_cap = max(1, math.floor(.50 / (distance + .0016)))
+        return float(max(1, math.floor(min(signal['leverage_requested'], max_leverage, risk_cap))))
 
     def custom_stoploss(self, pair, trade, current_time, current_rate, current_profit,
                         after_fill=False, **kwargs):
         plan = trade_plan(trade)
         if not plan or current_rate <= 0:
             return None
-        return stoploss_from_absolute(plan[0], current_rate, is_short=trade.is_short, leverage=trade.leverage)
+        previous = self.preserved_stops.get(trade.id, plan[0])
+        stop = min(plan[0], previous) if trade.is_short else max(plan[0], previous)
+        return stoploss_from_absolute(stop, current_rate, is_short=trade.is_short, leverage=trade.leverage)
 
     def custom_exit(self, pair, trade, current_time, current_rate, current_profit, **kwargs):
         plan = trade_plan(trade)

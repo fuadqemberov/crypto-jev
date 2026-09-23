@@ -37,7 +37,7 @@ def decide(result, ai, settings):
         reasons.append('Jev təsdiqi yoxdur.')
     else:
         a = ai['answers']
-        if any(a[k]['confidence'] < settings.min_confidence for k in ('direction', 'momentum', 'regime', 'risk')):
+        if any(a[k]['confidence'] < settings.min_confidence for k in ('direction', 'momentum', 'regime', 'risk', 'leverage')):
             reasons.append('Jev confidence həddindən aşağıdır.')
         if a['direction']['choice'] != result['candidate']:
             reasons.append('Jev qərarı ilə istifadə olunan istiqamət uyğun deyil.')

@@ -87,9 +87,14 @@ class Execution:
             identity = f"{symbol}:{decision}:{row['frames']['15m']['close_time']}"
             signal = dict(id=hashlib.sha256(identity.encode()).hexdigest()[:24], pair=pair_for(symbol),
                           observed_at=observed, expires_at=expires, action='WAIT', levels=None)
+            leverage_answer = row['ai']['answers'].get('leverage', {})
+            requested = leverage_answer.get('choice')
+            leverage_valid = (requested in {str(x) for x in (1,2,3,5,10,15,20,25,50,75,100)}
+                              and leverage_answer.get('confidence', 0) >= self.settings.min_confidence)
             if enabled and decision in ('LONG', 'SHORT') and levels and all(
-                    finite(levels.get(k)) and levels[k] > 0 for k in ('entry', 'stop', 'target')):
-                signal.update(action=decision, levels={k: levels[k] for k in ('entry', 'stop', 'target')})
+                    finite(levels.get(k)) and levels[k] > 0 for k in ('entry', 'stop', 'target')) and leverage_valid:
+                signal.update(action=decision, leverage_requested=int(requested),
+                              levels={k: levels[k] for k in ('entry', 'stop', 'target')})
             position_answer = row['ai']['answers'].get('position_action', {})
             if (position_answer.get('choice') == 'CLOSE'
                     and position_answer.get('confidence', 0) >= self.settings.min_confidence
@@ -97,4 +102,4 @@ class Execution:
                 # Exits remain available during entry pause or entry risk veto.
                 signal.update(close_trade_id=row['position_id'])
             result.append(signal)
-        return dict(version=1, mode='dry_run', generated_at=now, entries_enabled=enabled, signals=result)
+        return dict(version=2, mode='dry_run', generated_at=now, entries_enabled=enabled, signals=result)

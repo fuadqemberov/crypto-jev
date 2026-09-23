@@ -19,10 +19,10 @@ function execution(data){
   $('trade-summary').textContent=connected?`${fmt(data.wins,0)} qazanc / ${fmt(data.losses,0)} zərər`:'—';
   for(const t of connected?data.positions||[]:[]){
     const tr=node('tr'),plan=(t.enter_tag||'').split(':');
-    [t.pair,t.is_short?'SHORT':'LONG',fmt(t.open_rate,5),fmt(t.current_rate,5),fmt(t.stake_amount),fmt(t.profit_abs),`${fmt(t.stop_loss_abs,5)} / ${plan.length===4?fmt(Number(plan[3]),5):'—'}`,fmt(t.funding_fees,4)].forEach((v,i)=>tr.append(node('td',v,i===5?(t.profit_abs>=0?'pass':'fail'):'')));
+    [t.pair,t.is_short?'SHORT':'LONG',`${fmt(t.leverage,0)}×`,fmt(t.open_rate,5),fmt(t.current_rate,5),fmt(t.stake_amount),fmt(t.profit_abs),`${fmt(t.stop_loss_abs,5)} / ${plan.length>=4?fmt(Number(plan[3]),5):'—'}`,fmt(t.funding_fees,4)].forEach((v,i)=>tr.append(node('td',v,i===6?(t.profit_abs>=0?'pass':'fail'):'')));
     $('positions').append(tr);
   }
-  if(!$('positions').children.length){const tr=node('tr'),td=node('td',connected?'Açıq mövqe yoxdur.':'Freqtrade qoşulmayıb.');td.colSpan=8;tr.append(td);$('positions').append(tr);}
+  if(!$('positions').children.length){const tr=node('tr'),td=node('td',connected?'Açıq mövqe yoxdur.':'Freqtrade qoşulmayıb.');td.colSpan=9;tr.append(td);$('positions').append(tr);}
   for(const t of connected?data.trades||[]:[]){
     if(t.is_open)continue;
     const tr=node('tr');[t.pair,t.is_short?'SHORT':'LONG',fmt(t.open_rate,5),fmt(t.close_rate,5),fmt(t.close_profit_abs),fmt(t.funding_fees,4),t.exit_reason||'—'].forEach((v,i)=>tr.append(node('td',v,i===4?(t.close_profit_abs>=0?'pass':'fail'):'')));$('trades').append(tr);
@@ -39,10 +39,10 @@ function detail(row){
   }
   if(row.spread_bps!=null)[`Spread ${fmt(row.spread_bps)} bps`,`Funding ${fmt(row.funding_rate*100,4)}%`,`Məlumat vaxtı ${clock(row.observed_at)} · Bakı`].forEach(v=>$('market-meta').append(node('span',v)));
   if(row.levels){const l=row.levels; [`Giriş ${fmt(l.entry,5)}`,`SL ${fmt(l.stop,5)}`,`TP ${fmt(l.target,5)}`,`Xalis R:R ${fmt(l.net_rr)}`,l.note].forEach(v=>$('levels').append(node('span',v)));}
-  const names={direction:'İstiqamət',momentum:'Momentum',regime:'Bazar rejimi',risk:'Risk',driver:'Əsas kontekst'};
+  const names={leverage:'JEV leverage təklifi',direction:'İstiqamət',momentum:'Momentum',regime:'Bazar rejimi',risk:'Risk',driver:'Əsas kontekst'};
   if(!row.ai)$('ai').append(node('p',row.ai_error||'Jev qiymətləndirməsi yoxdur.','empty'));
   for(const [key,a] of Object.entries(row.ai?.answers||{})){
-    const card=node('div',null,'ai-card'); card.append(node('small',names[key]||key),node('strong',a.choice)); const bar=node('progress');bar.max=1;bar.value=a.confidence;bar.setAttribute('aria-label',`${names[key]} confidence`);card.append(bar,node('small',`Confidence: ${fmt(a.confidence*100)}%`),node('br'),node('small',Object.entries(a.probabilities).map(([k,p])=>`${k}: ${fmt(p*100,1)}%`).join(' · ')));$('ai').append(card);
+    const card=node('div',null,'ai-card'); card.append(node('small',names[key]||key),node('strong',key==='leverage'?a.choice+'×':a.choice)); const bar=node('progress');bar.max=1;bar.value=a.confidence;bar.setAttribute('aria-label',`${names[key]} confidence`);card.append(bar,node('small',`Confidence: ${fmt(a.confidence*100)}%`),node('br'),node('small',Object.entries(a.probabilities).map(([k,p])=>`${k}: ${fmt(p*100,1)}%`).join(' · ')));$('ai').append(card);
   }
   for(const r of [...(row.rules||[]),...(row.guards||[])]){const n=node('div',null,'rule');n.append(node('span',r.label),node('span',r.maximum!=null?`${r.points}/${r.maximum}`:r.passed?'Keçdi':'Keçmədi',r.passed?'pass':'fail'));$('rules').append(n);}
   const bars=row.candles||[]; if(bars.length){const ns='http://www.w3.org/2000/svg',values=bars.map(b=>b.close),lo=Math.min(...values),hi=Math.max(...values),range=hi-lo||1;for(let i=0;i<4;i++){const y=20+i*55,line=document.createElementNS(ns,'line');for(const [k,v]of Object.entries({x1:0,x2:720,y1:y,y2:y}))line.setAttribute(k,v);const label=document.createElementNS(ns,'text');label.setAttribute('x','726');label.setAttribute('y',y+4);label.textContent=fmt(hi-range*i/3,4);$('chart').append(line,label);}const line=document.createElementNS(ns,'polyline');line.setAttribute('points',values.map((v,i)=>`${i*710/(values.length-1)},${20+(hi-v)/range*165}`).join(' '));$('chart').append(line);}

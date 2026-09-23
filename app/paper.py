@@ -2,6 +2,9 @@
 import json
 import os
 import secrets
+import argparse
+import shutil
+import tempfile
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -16,7 +19,8 @@ def build_config(settings, token, username, password):
         'strategy': 'JevBridgeStrategy', 'timeframe': '1m',
         'dry_run': True, 'dry_run_wallet': 2000, 'fee': .0005,
         'trading_mode': 'futures', 'margin_mode': 'isolated',
-        'max_open_trades': 5, 'stake_currency': 'USDT', 'stake_amount': 'unlimited',
+        'max_open_trades': -1, 'stake_currency': 'USDT', 'stake_amount': 140,
+        'stoploss': -.50, 'liquidation_buffer': .10,
         'tradable_balance_ratio': 1.0, 'fiat_display_currency': '',
         'cancel_open_orders_on_exit': True,
         'unfilledtimeout': {'entry': 1, 'exit': 1, 'unit': 'minutes'},
@@ -73,8 +77,36 @@ def initialize(root=Path('.')):
     return target
 
 
+def upgrade(root=Path('.')):
+    """Migrate only execution settings; preserve wallet DB, credentials and symbols."""
+    target = root / 'user_data' / 'config.paper.json'
+    config = json.loads(target.read_text(encoding='utf-8'))
+    if config.get('dry_run') is not True or config.get('strategy') != 'JevBridgeStrategy':
+        raise ValueError('Yalnız JevBridgeStrategy dry-run konfiqurasiyası yenilənə bilər.')
+    changes = {'max_open_trades': -1, 'stake_amount': 140, 'stoploss': -.50}
+    if all(config.get(k) == v for k, v in changes.items()):
+        return target
+    backup = target.with_name(target.name + '.backup-' + secrets.token_hex(4))
+    shutil.copy2(target, backup)
+    if os.name != 'nt':
+        backup.chmod(0o600)
+    config.update(changes)
+    # Atomic replacement: an interrupted upgrade leaves the original or complete new config.
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=target.parent,
+                                     prefix='.config.paper.', suffix='.tmp', delete=False) as handle:
+        temp = Path(handle.name)
+        json.dump(config, handle, indent=2)
+        handle.write('\n')
+    os.replace(temp, target)
+    return target
+
+
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--upgrade', action='store_true')
+    args = parser.parse_args()
     try:
-        print(f'Hazır: {initialize()} — yalnız 2,000 USDT virtual hesab. Açarlar göstərilmir.')
+        target = upgrade() if args.upgrade else initialize()
+        print(f'Hazır: {target} — yalnız virtual icra; JEV leverage, say limiti yoxdur. Açarlar göstərilmir.')
     except FileExistsError as exc:
         print(exc)

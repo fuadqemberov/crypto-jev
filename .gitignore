@@ -11,6 +11,8 @@ data/
 dist/
 build/
 user_data/config*.json
+user_data/config*.json.backup-*
+user_data/.config.paper.*.tmp
 user_data/logs/
 user_data/data/
 user_data/backtest_results/

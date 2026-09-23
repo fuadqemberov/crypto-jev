@@ -15,7 +15,7 @@ from app.main import create_app
 
 
 def answer(direction='LONG'):
-    chosen = {'direction': direction, 'momentum': 'bullish' if direction == 'LONG' else 'bearish', 'regime': 'trend', 'risk': 'acceptable', 'driver': 'trend_alignment'}
+    chosen = {'leverage': '1', 'direction': direction, 'momentum': 'bullish' if direction == 'LONG' else 'bearish', 'regime': 'trend', 'risk': 'acceptable', 'driver': 'trend_alignment'}
     return dict(model='jev-test', answers={k: dict(type='choice', choice=chosen[k], confidence=.95,
                 probabilities={v: 1. if v == chosen[k] else 0. for v in q['criteria']}) for k, q in QUESTIONS.items()})
 

@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.execution import Execution, pair_for
 from app.main import create_app
-from app.paper import initialize, build_config
+from app.paper import initialize, build_config, upgrade
 from app.store import Store
 from app.engine import Engine
 from app.jev import Jev, JevError
@@ -22,7 +22,7 @@ def row(action='LONG'):
     return dict(symbol='BTCUSDT', observed_at=int(time.time()*1000), decision=action,
                 frames={'15m': {'close_time': 12345}},
                 levels={'entry': 100, 'stop': 98, 'target': 104},
-                ai={'answers': {}}, error=None, ai_error=None)
+                ai={'answers': {'leverage': {'choice': '5', 'confidence': .95}}}, error=None, ai_error=None)
 
 
 def connected(execution):
@@ -174,3 +174,37 @@ def test_bounded_parallel_scan_and_disk_failure_veto(tmp_path):
             assert all(r['decision']=='WAIT' and r['error'] for r in engine.rows.values())
         store.close()
     asyncio.run(run())
+
+
+def test_upgrade_preserves_local_credentials_symbols_and_database(tmp_path):
+    import json
+    directory=tmp_path/'user_data';directory.mkdir()
+    target=directory/'config.paper.json'
+    old=build_config(Settings(), 'secret-token','my-user','my-password')
+    old.update(max_open_trades=5,stake_amount='unlimited')
+    old['exchange']['pair_whitelist']=['DOGE/USDT:USDT']
+    target.write_text(json.dumps(old))
+    database=tmp_path/'wallet.sqlite';database.write_bytes(b'unchanged-db')
+    upgrade(tmp_path)
+    new=json.loads(target.read_text())
+    assert new['max_open_trades']==-1 and new['stake_amount']==140 and new['stoploss']==-.5
+    assert new['exchange']==old['exchange'] and new['api_server']==old['api_server']
+    assert new['jev_bridge']==old['jev_bridge'] and database.read_bytes()==b'unchanged-db'
+    backups=list(directory.glob('*.backup-*'));assert len(backups)==1
+    assert json.loads(backups[0].read_text())==old
+    upgrade(tmp_path);assert len(list(directory.glob('*.backup-*')))==1
+    new['dry_run']=False;target.write_text(json.dumps(new))
+    with pytest.raises(ValueError): upgrade(tmp_path)
+
+
+def test_missing_or_uncertain_leverage_blocks_entry_but_not_exit(tmp_path):
+    store=Store(tmp_path/'lev.db');execution=Execution(Settings(),None,store);connected(execution)
+    value=row();value['position_id']=42
+    value['ai']['answers']={'position_action':{'choice':'CLOSE','confidence':.99}}
+    output=execution.signals([value]);assert output['version']==2
+    assert output['signals'][0]['action']=='WAIT' and output['signals'][0]['close_trade_id']==42
+    value['ai']['answers']['leverage']={'choice':'100','confidence':.5}
+    assert execution.signals([value])['signals'][0]['action']=='WAIT'
+    value['ai']['answers']['leverage']['confidence']=.99
+    assert execution.signals([value])['signals'][0]['leverage_requested']==100
+    store.close()

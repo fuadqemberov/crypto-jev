@@ -9,6 +9,9 @@ def choice(instructions, criteria):
 
 
 QUESTIONS = {
+    'leverage': choice('Choose leverage for a NEW position from the supplied market context. Use 1 when waiting or uncertain. Higher leverage requires unusually strong alignment, ordinary volatility, good liquidity and a non-extended entry. Confidence is not a win probability. Do not increase leverage because of previous wins or to recover losses. Python will enforce exchange and stop-distance limits independently.', {
+        str(x): f'Request {x}x leverage; this multiplies both gains and losses on margin.'
+        for x in (1, 2, 3, 5, 10, 15, 20, 25, 50, 75, 100)}),
     'direction': choice('You are the primary decision-maker for a crypto research signal with a 1-4 hour horizon. Evaluate the supplied multi-timeframe market context. Choose the most defensible directional thesis, or WAIT when evidence is weak, conflicting or an entry is extended. Trend continuation, a supported pullback and a plausible reversal may each be valid; no technical-score threshold determines your answer. Use the precomputed semantic labels; do not calculate prices or invent news. This is a research assessment, not a claim of future returns.', {
         'LONG': 'The supplied price structure, momentum and participation support an upward thesis with a reasonable entry context.',
         'SHORT': 'The supplied price structure, momentum and participation support a downward thesis with a reasonable entry context.',
@@ -36,7 +39,7 @@ POSITION_QUESTIONS = {
         'HOLD': 'Keep the existing position under its independent protective stop.',
         'CLOSE': 'Exit the existing position because its thesis has materially deteriorated.'}),
 }
-PROMPT_VERSION = '3'
+PROMPT_VERSION = '4'
 
 
 

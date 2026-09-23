@@ -3,7 +3,7 @@
 **JEV qərar verir, Python riskləri yoxlayır, Freqtrade virtual əməliyyatları icra edir.**
 Azərbaycan dilində mövcud FastAPI paneli saxlanılıb; ayrıca Freqtrade prosesi ilə iki istiqamətli inteqrasiya əlavə olunub.
 
-> Bu versiya yalnız **paper trading** üçündür. Başlanğıc hesab **2,000 USDT**, maksimum **5 mövqe**, leverage **1×**.
+> Bu versiya yalnız **paper trading** üçündür. Başlanğıc hesab **2,000 USDT**, mövqe sayı üçün sabit limit yoxdur. Leverage-i **JEV seçir**; birja və stop məsafəsi tətbiq olunan dəyəri azalda bilər.
 > Gəlirlilik sübut edilməyib. JEV confidence qazanc ehtimalı deyil. Real pul və exchange API açarı lazım deyil.
 
 ## Niyə Python?
@@ -27,6 +27,14 @@ Mövcud virtual balans və əməliyyat bazası restartda sıfırlanmır. Lokal i
 Python/TA-Lib quraşdırılması Windows-da problem yaradarsa WSL2 alternativdir; Docker tələb deyil.
 
 Yalnız əvvəlki analiz paneli üçün `run.cmd` hələ də işləyir; Freqtrade olmadan order icrası yoxdur.
+
+### Mövcud quraşdırmanı yeniləmək
+
+İki prosesi dayandırın, `git pull` edin və `run-paper.cmd` işlədin. Lokal config avtomatik yenilənir;
+API açarları, simvol siyahısı, database yolu və əməliyyat tarixçəsi saxlanılır. Köhnə config-in məxfi backup-ı yaradılır.
+Linux-da restartdan əvvəl `.venv/bin/python -m app.paper --upgrade` işlədin.
+Dashboard və Freqtrade birlikdə yenilənməlidir: yeni bridge protokolu v2-dir, köhnə siqnallar giriş yaratmır.
+Yeniləmə açıq mövqenin leverage-ini dəyişmir; yalnız yeni girişlər üçün seçim edilir.
 
 ## Linux / macOS — iki terminal
 
@@ -76,7 +84,10 @@ JEV driver sərbəst düşüncə mətni yox, strukturlaşdırılmış səbəb ka
 
 - **Yalnız dry-run:** strategiya real ticarət və backtest/hyperopt rejimində başlamır.
 - **Yalnız JEV istiqaməti:** model olmadan, API xətasında və ya demo rejimində giriş yoxdur.
-- **85% confidence:** direction/momentum/regime/risk üçün əvvəlki hədd saxlanılır. Texniki bal təkbaşına giriş şərti deyil.
+- **85% confidence:** direction/momentum/regime/risk/leverage üçün hədd tətbiq edilir. Leverage cavabı yoxdursa və ya etibarsızdırsa giriş yoxdur.
+- **Mövqe sayı:** `max_open_trades=-1`. Balans, minimum order, aktiv simvol siyahısı, gündəlik zərər və cooldown qaydaları qalır. Freqtrade hər cüt üçün bir açıq mövqe saxlayır. Standart 5 simvol izlənirsə, say limitinin götürülməsi təkbaşına yeni simvollar əlavə etmir.
+- **JEV leverage:** model `1, 2, 3, 5, 10, 15, 20, 25, 50, 75, 100` seçimlərindən birini verir. Tətbiq olunan tam ədəd leverage `min(JEV seçimi, birja maksimumu, floor(0.50 / (stop məsafəsi + 0.0016)))` ilə məhdudlaşır. Stop məsafəsi giriş qiymətinə nisbətdir. Bu konservativ yoxlamadır, dəqiq liquidation qiyməti deyil; Freqtrade əlavə liquidation buffer tətbiq edir. 100× təklif hər zaman 100× icra demək deyil. Məsələn, stop 2% uzaqdadırsa 100× təklif ən çox 23× olur.
+- **Məbləğ:** Freqtrade limitsiz mövqe sayı + `stake_amount="unlimited"` qəbul etmir. Config-dəki 140 başlanğıc rəqəmdir; hər dövrədə kapitalın 7%-i/sərbəst balans ilə yenilənir, risk callback-i bunu daha da azalda bilər. Bu rəqəm birjanın leverage tier yoxlaması üçün yuxarı sərhəddir.
 - **Siqnalın yaşı:** standart 120 saniyə, bazar snapshot vaxtından hesablanır. Gələcək tarixli və köhnə siqnal rədd edilir.
 - **Təkrarsız giriş:** simvol + istiqamət + bağlanmış 15m şam əsasında ID. Freqtrade-in saxlanmış trade tarixçəsi restartdan sonra təkrar girişi də bloklayır. Trade bazasını silmək bu yaddaşı itirər.
 - **Margin:** Freqtrade-in istifadə oluna bilən ümumi stake kapitalının maksimum 7%-i; 2,000 üçün 140 USDT. Açıq unrealized PnL bu stake bazasına əlavə edilmir.
@@ -84,7 +95,7 @@ JEV driver sərbəst düşüncə mətni yox, strukturlaşdırılmış səbəb ka
 - **Yeni giriş veto-su:** həmin UTC günündə reallaşmış zərər ilkin virtual hesabın 3%-inə çatarsa girişlər bloklanır. 2,000 üçün 60 USDT. Bu limit açıq zərəri avtomatik bağlamır.
 - **Cooldown:** hər mövqedən sonra 5 dəqiqə; 60 dəqiqədə 3 stop-loss sonrası 30 dəqiqəlik StoplossGuard.
 - **Cari order yoxlaması:** təzə order-book spread maksimum 15 bps; siqnal girişindən qiymət fərqi maksimum 0.3%; xərc sonrası R:R minimum 1.5.
-- **SL/TP:** başlanğıc plan SL 2×ATR, TP 4×ATR. Freqtrade-də müstəqil 5% margin stop fallback-i, plan stop-u, target və maksimum 4 saat saxlama limiti var. Stop sonradan genişləndirilmir.
+- **SL/TP:** başlanğıc plan SL 2×ATR, TP 4×ATR. Leverage ilə uyğunlaşmaq üçün margin stop fallback-i 5%-dən 50%-ə dəyişib; normal stop yenə qiymət üzrə ATR planıdır. Leverage yoxlaması planlaşdırılmış stop + xərcin margin-in 50%-ni keçməsinə icazə vermir. Kapital üzrə 0.5% risk büdcəsi saxlanılır. Bu limitlər gap/slippage zamanı zəmanət deyil. Target və maksimum 4 saat saxlama limiti qalır. Mövcud mövqenin saxlanmış stop-u genişləndirilmir.
 - **Fasilə:** paneldə “Girişləri dayandır” diskdə saxlanılır. Yalnız yeni girişlər dayanır; açıq mövqelərin SL/TP, müddət və JEV çıxışları davam edir. Bu, bütün mövqeləri bağlayan emergency düymə deyil.
 - **Disk xətası:** jurnala yazılmayan analiz icraya buraxılmır.
 - **Bağlantı xətası:** təzə Freqtrade telemetry yoxdursa giriş siqnalları bağlanır. Panel köhnə balansı cari məlumat kimi göstərmir.
@@ -98,6 +109,7 @@ Eyni hesabı başqa order icraçısı ilə paylaşmaq bu versiyanın əhatəsind
 - Wallet, sərbəst vəsait və istifadə olunan margin ayrı göstərilir.
 - Reallaşmış və ümumi PnL Freqtrade API-dən oxunur; tətbiq ayrıca uyğunsuz balans hesablamır.
 - Açıq mövqelərdə istiqamət, giriş/cari qiymət, margin, PnL, SL/TP və funding göstərilir.
+- JEV panelində təklif edilən leverage, mövqe sətrində faktiki tətbiq olunan leverage görünür. Risk büdcəsi sabit olduğundan yüksək leverage margin-i azalda bilər; qazancın eyni dəfə artacağı vədi yoxdur.
 - Son 30 trade içindən bağlı əməliyyatlar göstərilir; bütün tarixçə Freqtrade SQLite bazasındadır.
 - 0.05% hər tərəf üçün komissiya konfiqurasiya olunub. Funding Freqtrade-in əldə etdiyi məlumat qədər hesablanır; onu ikinci dəfə PnL-dən çıxmırıq.
 - Dry-run real fill, order-book queue, likvidlik, slippage və faktiki hesab funding-i ilə tam ekvivalent deyil.
