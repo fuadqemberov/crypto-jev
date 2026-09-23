@@ -40,6 +40,44 @@ def signal(action='LONG'):
                 levels=dict(entry=100, stop=98 if action=='LONG' else 102, target=104 if action=='LONG' else 96))
 
 
+def test_dynamic_whitelist_uses_resolved_markets(strategy):
+    strategy.config['exchange']['pair_whitelist'] = ['.*/USDT:USDT']
+    strategy.dp.current_whitelist = lambda: ['BTC/USDT:USDT']
+    value = signal()
+    load(strategy, value)
+    assert value['pair'] in strategy.signals
+    strategy.dp.current_whitelist = lambda: ['ETH/USDT:USDT']
+    load(strategy, value)
+    assert not strategy.signals
+
+
+def test_bridge_to_entry_and_risk_sizing(strategy, tmp_path, monkeypatch):
+    import time
+    import pandas as pd
+    from app.execution import Execution
+    from app.store import Store
+    store = Store(tmp_path/'flow.db')
+    execution = Execution(Settings(), None, store)
+    execution.snapshot = dict(connected=True, state='running', observed_at=int(time.time()*1000), positions=[])
+    value = signal()
+    row = dict(symbol='BTCUSDT', observed_at=value['observed_at'], decision='LONG',
+               levels=value['levels'], frames={'15m': {'close_time': 123}},
+               ai={'answers': {'leverage': {'choice': '1', 'confidence': .95}}},
+               error=None, ai_error=None)
+    payload = execution.signals([row])
+    strategy.dp.current_whitelist = lambda: payload['pairs']
+    now = datetime.now(timezone.utc)
+    strategy._accept(payload, now.timestamp()*1000)
+    data = strategy.populate_entry_trend(pd.DataFrame({'close':[100,100], 'volume':[1,1]}), {'pair':value['pair']})
+    assert data.iloc[-1].enter_long == 1
+    entry_tag = data.iloc[-1].enter_tag
+    monkeypatch.setattr(Trade, 'get_trades_proxy', lambda **kw: [])
+    strategy.wallets = SimpleNamespace(get_total_stake_amount=lambda: 2000)
+    assert strategy.custom_stake_amount(value['pair'],now,100,400,5,2000,1,entry_tag,'long') == 140
+    assert strategy.confirm_trade_entry(value['pair'],'market',1.4,100,'GTC',now,entry_tag,'long')
+    store.close()
+
+
 def load(strategy, value, enabled=True):
     now=datetime.now(timezone.utc)
     strategy._accept(dict(version=2, mode='dry_run', generated_at=int(now.timestamp()*1000),

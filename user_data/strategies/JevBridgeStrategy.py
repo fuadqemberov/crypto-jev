@@ -1,5 +1,6 @@
 """Freqtrade 2026.8 paper executor. JEV is the only directional signal source."""
 import math
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -7,6 +8,8 @@ from urllib.parse import urlparse
 import requests
 from freqtrade.persistence import Trade
 from freqtrade.strategy import IStrategy, stoploss_from_absolute
+
+log = logging.getLogger(__name__)
 
 
 def number(value):
@@ -99,8 +102,10 @@ class JevBridgeStrategy(IStrategy):
                 or not isinstance(payload.get('signals'), list)):
             raise ValueError('Stale or invalid bridge payload')
         accepted = {}
+        allowed_pairs = (self.dp.current_whitelist() if getattr(self, 'dp', None)
+                         and hasattr(self.dp, 'current_whitelist') else self.config['exchange']['pair_whitelist'])
         for signal in payload['signals']:
-            if not isinstance(signal, dict) or signal.get('pair') not in self.config['exchange']['pair_whitelist']:
+            if not isinstance(signal, dict) or signal.get('pair') not in allowed_pairs:
                 continue
             if not self._fresh(signal, now) or signal.get('action') not in ('WAIT', 'LONG', 'SHORT'):
                 continue
@@ -137,7 +142,8 @@ class JevBridgeStrategy(IStrategy):
         if self.pending is not None and self.pending.done():
             try:
                 self._accept(self.pending.result(), current_time.timestamp() * 1000)
-            except Exception:
+            except Exception as exc:
+                log.warning('JEV bridge rejected (%s); entries disabled for this cycle.', type(exc).__name__)
                 self.signals, self.entries_enabled = {}, False
             self.pending = None
         if self.pending is None:

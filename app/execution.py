@@ -102,4 +102,9 @@ class Execution:
                 # Exits remain available during entry pause or entry risk veto.
                 signal.update(close_trade_id=row['position_id'])
             result.append(signal)
-        return dict(version=2, mode='dry_run', generated_at=now, entries_enabled=enabled, signals=result)
+        # Freqtrade only needs candles for actionable entries and existing positions.
+        # The dashboard scanner still covers the entire discovered market universe.
+        pairs = {s['pair'] for s in result if s['action'] in ('LONG', 'SHORT')}
+        pairs.update(t['pair'] for t in status.get('positions', []) if t.get('pair'))
+        return dict(version=2, mode='dry_run', generated_at=now, entries_enabled=enabled, signals=result,
+                    pairs=sorted(pairs), refresh_period=5)

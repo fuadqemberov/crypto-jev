@@ -22,6 +22,9 @@ class Engine:
         self.next_scan = None
         self.storage_error = False
         self.lock = asyncio.Lock()
+        self.symbols = settings.symbols if settings.symbols != ('ALL',) else ()
+        self.discovery_error = None
+        self.scan_completed = 0
 
     async def scan(self):
         if self.lock.locked():
@@ -30,8 +33,18 @@ class Engine:
             self.scanning = True
             try:
                 self.storage_error = False
+                self.scan_completed = 0
+                self.discovery_error = None
+                if self.settings.symbols == ('ALL',):
+                    try:
+                        self.symbols = (('BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT')
+                                        if self.settings.demo else await self.market.discover_symbols())
+                        self.rows = {s: row for s, row in self.rows.items() if s in self.symbols}
+                    except Exception:
+                        self.discovery_error = 'Bazar siyahısı yenilənmədi; növbəti skanda təkrar yoxlanacaq.'
+                        log.warning('Market discovery failed')
                 semaphore = asyncio.Semaphore(2)
-                await asyncio.gather(*(self._scan_symbol(symbol, semaphore) for symbol in self.settings.symbols))
+                await asyncio.gather(*(self._scan_symbol(symbol, semaphore) for symbol in self.symbols))
                 self.last_scan = int(time.time() * 1000)
                 self.next_scan = self.last_scan + self.settings.scan_seconds * 1000
             finally:
@@ -84,6 +97,7 @@ class Engine:
                 row.update(decision='WAIT', levels=None, error='Analiz diskə yazılmadı; icra bloklandı.')
                 log.error('Analysis history could not be saved')
             self.rows[symbol] = row
+            self.scan_completed += 1
 
     async def run(self):
         while True:
@@ -97,8 +111,11 @@ class Engine:
             ttl = self.settings.signal_ttl if self.settings.bridge_token else self.settings.scan_seconds + 60
             stale = not 0 <= now - row['observed_at'] < ttl * 1000
             rows.append({**row, 'stale': stale, 'decision': 'WAIT' if stale else row['decision'],
+                         'jev_decision': row.get('ai', {}).get('answers', {}).get('direction', {}).get('choice') if row.get('ai') else None,
+                         'analysis_age_seconds': max(0, (now - row['observed_at']) // 1000),
                          'levels': None if stale else row.get('levels')})
         return dict(rows=rows, scanning=self.scanning, last_scan=self.last_scan, next_scan=self.next_scan,
+                    market_count=len(self.symbols), market_symbols=self.symbols, scan_completed=self.scan_completed, discovery_error=self.discovery_error,
                     demo=self.settings.demo, ai_configured=bool(self.settings.api_key), storage_error=self.storage_error,
                     min_confidence=self.settings.min_confidence, model=self.settings.model,
                     execution=self.execution.status())

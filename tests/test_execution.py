@@ -82,6 +82,21 @@ def test_pause_vetoes_entries_not_position_bound_exits(tmp_path):
     store.close()
 
 
+def test_executor_pairs_only_fresh_entries_and_open_positions(tmp_path):
+    store = Store(tmp_path/'pairs.db')
+    execution = Execution(Settings(), None, store)
+    connected(execution)
+    execution.snapshot['positions'] = [{'pair': 'ETH/USDT:USDT'}]
+    stale = {**row(), 'symbol': 'SOLUSDT', 'observed_at': 0}
+    waiting = {**row('WAIT'), 'symbol': 'BNBUSDT'}
+    payload = execution.signals([row(), stale, waiting])
+    assert payload['pairs'] == ['BTC/USDT:USDT', 'ETH/USDT:USDT']
+    assert payload['refresh_period'] == 5
+    store.set_paused(True)
+    assert execution.signals([row()])['pairs'] == ['ETH/USDT:USDT']
+    store.close()
+
+
 def test_telemetry_read_only_sanitized_and_fail_closed(tmp_path):
     async def run():
         paths=[]
@@ -188,6 +203,8 @@ def test_upgrade_preserves_local_credentials_symbols_and_database(tmp_path):
     upgrade(tmp_path)
     new=json.loads(target.read_text())
     assert new['max_open_trades']==-1 and new['stake_amount']==140 and new['stoploss']==-.5
+    assert new['pairlists'][0]['method'] == 'RemotePairList'
+    assert new['pairlists'][0]['bearer_token'] == new['jev_bridge']['token']
     assert new['exchange']==old['exchange'] and new['api_server']==old['api_server']
     assert new['jev_bridge']==old['jev_bridge'] and database.read_bytes()==b'unchanged-db'
     backups=list(directory.glob('*.backup-*'));assert len(backups)==1

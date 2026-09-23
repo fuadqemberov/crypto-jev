@@ -121,7 +121,7 @@ Eyni hesabı başqa order icraçısı ilə paylaşmaq bu versiyanın əhatəsind
 |---|---|
 | `TYPESAFE_API_KEY` | Boşdursa JEV çağırılmır və giriş yoxdur |
 | `TYPESAFE_MODEL` | `jev-latest`; faktiki model analiz tarixçəsində saxlanır |
-| `SYMBOLS` | BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT |
+| `SYMBOLS` | `ALL`: bütün aktiv Binance USDT perpetual bazarları |
 | `SCAN_SECONDS` | Yeni `.env.example` üçün 60; skan bitəndən sonrakı gözləmə |
 | `MIN_AI_CONFIDENCE` | 0.85; gəlirlilik ehtimalı deyil |
 | `MAX_SPREAD_BPS` | Analizdə 15; executor ayrıca maksimum 15 yoxlayır |
@@ -136,7 +136,7 @@ Eyni hesabı başqa order icraçısı ilə paylaşmaq bu versiyanın əhatəsind
 
 `Settings`-in env verilməyən fallback scan intervalı geriyə uyğunluq üçün 300 saniyədir.
 Mövcud `.env` intervalı avtomatik dəyişdirilmir; daha tez analiz üçün `SCAN_SECONDS=60` seçə bilərsiniz.
-1–20 simvol dəstəklənir. Çox simvol/uzun AI cavabı bəzi siqnalları vaxtdan sala bilər; təhlükəsizlik üçün TTL-i kor-koranə artırmayın.
+SYMBOLS=ALL bütün aktiv USDT perpetual bazarlarını hər skanda Binance-dən avtomatik tapır; coin sayı limiti yoxdur. Çox simvol/uzun AI cavabı bəzi siqnalları vaxtdan sala bilər; təhlükəsizlik üçün TTL-i kor-koranə artırmayın.
 JEV eyni semantik vəziyyət + şam + mövqe konteksti üçün cache edilir; maksimum 200 qeyd, restartda təmizlənir.
 
 ## Saxlama və təhlükəsizlik
@@ -172,8 +172,8 @@ node --check app/static/app.js
 ```
 
 Testlər real Freqtrade 2026.8 strategy resolver/config schema ilə işləyir; exchange/AI cavabları testdə mock edilir.
-UI smoke testi üçün `playwright` və Chromium quraşdırın, dashboard-u `DEMO_MODE=true` ilə başladın və
-`node tests/ui-smoke.cjs` işlədin. UI testindəki balans/əməliyyatlar **fixture**-dir.
+UI testi üçün `playwright` və Microsoft Edge tələb olunur. Lokal dashboard işləyərkən
+`node tests/terminal-ui.cjs` işlədin. Test canlı məlumatı oxuyur; order yaratmır.
 
 **Canlı JEV və Binance ilə uzunmüddətli paper sınağı bu dəyişiklik zamanı edilməyib.**
 Real API açarı olmadan gəlirlilik, siqnal keyfiyyəti və faktiki fill davranışı sübut edilə bilməz.
@@ -190,3 +190,11 @@ Bu versiya yoxlanılan inteqrasiya bazasıdır, “zəmanətli qazanc sistemi”
 - [Freqtrade leverage](https://www.freqtrade.io/en/stable/leverage/)
 - [TypeSafe System One API](https://docs.typesafe.ai/api)
 - [Jev confidence](https://docs.typesafe.ai/confidence)
+
+## Yenilənmiş terminal və icra axını
+
+Bütün aktiv USDT perpetual bazarları analiz edilir. Freqtrade `RemotePairList` ilə yalnız təzə giriş siqnalı olan bazarları və açıq mövqeləri alır; bu, yüzlərlə bazarın şam yükləməsinin order dövrəsini ləngitməsinin qarşısını alır. Mövcud lokal konfiqurasiyada `pairlists` bölməsi də bu rejimə uyğun olmalıdır. Siqnalın 120 saniyəlik müddəti və risk yoxlamaları saxlanılır.
+
+Binance üslubunda terminalda canlı şam qrafiki (1m/15m/1h/4h), real order book, axtarış və siqnal filtrləri, JEV qərarı və ayrıca icra səbəbi, mövqelər və tarixçə var. Seçilmiş coinin canlı qiyməti onun son JEV analizindən ayrıca yenilənir. Bütün coinlərin JEV analizi eyni anda bitmir; köhnə analizlər giriş üçün istifadə olunmur.
+
+Brauzer yoxlaması: işləyən lokal dashboard və Playwright/Edge olduqda `node tests/terminal-ui.cjs`. Bu yoxlama canlı məlumatı yalnız oxuyur; order və pause/resume sorğusu göndərmir. Masaüstü/mobil şəkillər `data/terminal-desktop.png` və `data/terminal-mobile.png` daxilində saxlanılır.

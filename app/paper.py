@@ -13,6 +13,13 @@ from .config import Settings
 from .execution import pair_for
 
 
+def execution_pairlists(token):
+    return [{'method': 'RemotePairList',
+             'pairlist_url': 'http://127.0.0.1:8082/api/execution/signals',
+             'bearer_token': token, 'refresh_period': 5, 'read_timeout': 2,
+             'keep_pairlist_on_failure': False}]
+
+
 def build_config(settings, token, username, password):
     return {
         '$schema': 'https://schema.freqtrade.io/schema.json',
@@ -31,8 +38,8 @@ def build_config(settings, token, username, password):
         'exit_pricing': {'price_side': 'other', 'use_order_book': True, 'order_book_top': 1},
         'exchange': {'name': 'binance', 'key': '', 'secret': '',
                      'ccxt_config': {'enableRateLimit': True}, 'ccxt_async_config': {},
-                     'pair_whitelist': [pair_for(s) for s in settings.symbols], 'pair_blacklist': []},
-        'pairlists': [{'method': 'StaticPairList'}],
+                     'pair_whitelist': ['.*/USDT:USDT'] if settings.symbols == ('ALL',) else [pair_for(s) for s in settings.symbols], 'pair_blacklist': []},
+        'pairlists': execution_pairlists(token),
         'telegram': {'enabled': False, 'token': '', 'chat_id': ''},
         'api_server': {'enabled': True, 'listen_ip_address': '127.0.0.1', 'listen_port': 8083,
                        'verbosity': 'error', 'enable_openapi': False, 'CORS_origins': [],
@@ -58,7 +65,7 @@ def initialize(root=Path('.')):
         'FREQTRADE_PASSWORD': existing.get('FREQTRADE_PASSWORD') or secrets.token_urlsafe(32),
         'FREQTRADE_URL': 'http://127.0.0.1:8083',
     }
-    symbols = existing.get('SYMBOLS') or 'BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT'
+    symbols = existing.get('SYMBOLS') or 'ALL'
     settings = Settings(symbols=tuple(s.strip().upper() for s in symbols.split(',') if s.strip()),
                         bridge_token=values['BRIDGE_TOKEN'])
     config = build_config(settings, values['BRIDGE_TOKEN'], values['FREQTRADE_USER'], values['FREQTRADE_PASSWORD'])
@@ -83,7 +90,8 @@ def upgrade(root=Path('.')):
     config = json.loads(target.read_text(encoding='utf-8'))
     if config.get('dry_run') is not True or config.get('strategy') != 'JevBridgeStrategy':
         raise ValueError('Yalnız JevBridgeStrategy dry-run konfiqurasiyası yenilənə bilər.')
-    changes = {'max_open_trades': -1, 'stake_amount': 140, 'stoploss': -.50}
+    changes = {'max_open_trades': -1, 'stake_amount': 140, 'stoploss': -.50,
+               'pairlists': execution_pairlists(config['jev_bridge']['token'])}
     if all(config.get(k) == v for k, v in changes.items()):
         return target
     backup = target.with_name(target.name + '.backup-' + secrets.token_hex(4))

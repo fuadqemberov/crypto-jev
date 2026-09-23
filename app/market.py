@@ -39,6 +39,19 @@ class Market:
             except (httpx.HTTPError, ValueError) as e:
                 raise MarketError('Binance məlumatını almaq mümkün olmadı.') from e
 
+    async def discover_symbols(self):
+        data = await self.get('/fapi/v1/exchangeInfo')
+        symbols = sorted({item['symbol'] for item in data['symbols']
+                          if item.get('status') == 'TRADING'
+                          and item.get('contractType') == 'PERPETUAL'
+                          and item.get('quoteAsset') == 'USDT'
+                          and item.get('marginAsset') == 'USDT'
+                          and isinstance(item.get('symbol'), str)
+                          and item['symbol'].isalnum() and item['symbol'].endswith('USDT')})
+        if not symbols:
+            raise MarketError('Aktiv USDT perpetual bazarları tapılmadı.')
+        return tuple(symbols)
+
     async def snapshot(self, symbol):
         raw = {}
         for interval in INTERVALS:

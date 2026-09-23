@@ -23,6 +23,7 @@ def create_app(settings=None, start_worker=True):
         async with httpx.AsyncClient(timeout=httpx.Timeout(20), follow_redirects=False) as client:
             app.state.engine = Engine(settings, client, store)
             app.state.manual_task = None
+            app.state.market_views = {}
             app.state.last_manual = -float('inf')
             worker = asyncio.create_task(app.state.engine.run()) if start_worker else None
             telemetry = asyncio.create_task(app.state.engine.execution.run()) if start_worker else None
@@ -85,6 +86,34 @@ def create_app(settings=None, start_worker=True):
     @app.get('/api/history')
     async def history():
         return app.state.engine.store.history()
+
+    @app.get('/api/market/{symbol}')
+    async def market_view(symbol: str, interval: str = '15m'):
+        engine = app.state.engine
+        if symbol not in engine.symbols or interval not in ('1m', '15m', '1h', '4h'):
+            raise HTTPException(404, 'Bazar və ya period tapılmadı.')
+        if settings.demo:
+            raise HTTPException(503, 'Demo rejimində canlı order book yoxdur.')
+        key = (symbol, interval)
+        cached = app.state.market_views.get(key)
+        if cached and time.monotonic() - cached[0] < 5:
+            return cached[1]
+        try:
+            bars, book, premium = await asyncio.gather(
+                engine.market.get('/fapi/v1/klines', symbol=symbol, interval=interval, limit=100),
+                engine.market.get('/fapi/v1/depth', symbol=symbol, limit=20),
+                engine.market.get('/fapi/v1/premiumIndex', symbol=symbol))
+            value = dict(symbol=symbol, interval=interval, observed_at=int(time.time()*1000),
+                         candles=[dict(time=b[0], open=float(b[1]), high=float(b[2]), low=float(b[3]),
+                                       close=float(b[4]), volume=float(b[5])) for b in bars],
+                         bids=book['bids'], asks=book['asks'], mark=float(premium['markPrice']),
+                         funding_rate=float(premium['lastFundingRate']))
+            app.state.market_views[key] = (time.monotonic(), value)
+            if len(app.state.market_views) > 8:
+                del app.state.market_views[next(iter(app.state.market_views))]
+            return value
+        except Exception:
+            raise HTTPException(503, 'Canlı bazar məlumatı alınmadı.') from None
 
     @app.get('/api/execution/signals')
     async def signals():
