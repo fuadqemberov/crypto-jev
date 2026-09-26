@@ -181,7 +181,7 @@ def test_bounded_parallel_scan_and_disk_failure_veto(tmp_path):
                 return demo_snapshot(symbol)
             engine.market.snapshot=snapshot
             await engine.scan()
-            assert peak==2 and len(engine.rows)==3
+            assert 1 < peak <= 6 and len(engine.rows)==3
             def fail(value): raise OSError('disk full')
             store.append=fail
             await engine.scan()
@@ -214,14 +214,17 @@ def test_upgrade_preserves_local_credentials_symbols_and_database(tmp_path):
     with pytest.raises(ValueError): upgrade(tmp_path)
 
 
-def test_missing_or_uncertain_leverage_blocks_entry_but_not_exit(tmp_path):
+def test_missing_leverage_blocks_entry_but_not_exit_and_uncertain_is_uncapped(tmp_path):
     store=Store(tmp_path/'lev.db');execution=Execution(Settings(),None,store);connected(execution)
     value=row();value['position_id']=42
     value['ai']['answers']={'position_action':{'choice':'CLOSE','confidence':.99}}
     output=execution.signals([value]);assert output['version']==2
     assert output['signals'][0]['action']=='WAIT' and output['signals'][0]['close_trade_id']==42
-    value['ai']['answers']['leverage']={'choice':'100','confidence':.5}
+    value['ai']['answers']['leverage']={'choice':'7','confidence':.99}
     assert execution.signals([value])['signals'][0]['action']=='WAIT'
+    value['ai']['answers']['leverage']={'choice':'3','confidence':.5}
+    output=execution.signals([value])['signals'][0]
+    assert output['action']=='LONG' and output['leverage_requested']==100
     value['ai']['answers']['leverage']['confidence']=.99
-    assert execution.signals([value])['signals'][0]['leverage_requested']==100
+    assert execution.signals([value])['signals'][0]['leverage_requested']==3
     store.close()

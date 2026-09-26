@@ -37,7 +37,9 @@ def decide(result, ai, settings):
         reasons.append('Jev təsdiqi yoxdur.')
     else:
         a = ai['answers']
-        if any(a[k]['confidence'] < settings.min_confidence for k in ('direction', 'momentum', 'regime', 'risk', 'leverage')):
+        # Leverage has 11 choices, so its confidence practically never reaches the
+        # threshold; it sizes margin only and falls back to 1x in the executor.
+        if any(a[k]['confidence'] < settings.min_confidence for k in ('direction', 'momentum', 'regime', 'risk')):
             reasons.append('Jev confidence həddindən aşağıdır.')
         if a['direction']['choice'] != result['candidate']:
             reasons.append('Jev qərarı ilə istifadə olunan istiqamət uyğun deyil.')

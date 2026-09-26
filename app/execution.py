@@ -89,8 +89,11 @@ class Execution:
                           observed_at=observed, expires_at=expires, action='WAIT', levels=None)
             leverage_answer = row['ai']['answers'].get('leverage', {})
             requested = leverage_answer.get('choice')
-            leverage_valid = (requested in {str(x) for x in (1,2,3,5,10,15,20,25,50,75,100)}
-                              and leverage_answer.get('confidence', 0) >= self.settings.min_confidence)
+            leverage_valid = requested in {str(x) for x in (1,2,3,5,10,15,20,25,50,75,100)}
+            # A confident JEV choice caps leverage. Otherwise 100 means "no JEV cap": the
+            # executor's risk-based algorithm (stop distance, 20x ceiling) decides alone.
+            if leverage_valid and leverage_answer.get('confidence', 0) < self.settings.min_confidence:
+                requested = '100'
             if enabled and decision in ('LONG', 'SHORT') and levels and all(
                     finite(levels.get(k)) and levels[k] > 0 for k in ('entry', 'stop', 'target')) and leverage_valid:
                 signal.update(action=decision, leverage_requested=int(requested),
