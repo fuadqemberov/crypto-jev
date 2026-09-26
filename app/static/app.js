@@ -13,7 +13,11 @@ function execution(data){
  $('execution-status').textContent=connected?`${data.paused?'Yeni girişlər dayandırılıb':'Avtomatik girişlər aktivdir'} · ${clock(data.observed_at)} Bakı`:data?.error||'Freqtrade bağlantısı yoxdur.';
  $('pause-entries').disabled=!data?.bridge_configured;
  $('pause-entries').textContent=data?.paused?'Avtomatik girişləri başlat':'Yeni girişləri dayandır';
- $('wallet').textContent=connected?fmt(data.wallet):'—';$('free-margin').textContent=connected?`${fmt(data.free)} / ${fmt(data.used)}`:'—';
+ $('wallet').textContent=connected?fmt(data.wallet):'—';
+ // Wallet changes only when a trade closes; equity adds the open positions' unrealized PnL.
+ const openPnl=connected?(data.positions||[]).reduce((sum,t)=>sum+(Number(t.profit_abs)||0),0):null;
+ $('equity').textContent=connected&&data.wallet!=null?fmt(Number(data.wallet)+openPnl):'—';
+ $('equity').className=openPnl==null?'':openPnl>=0?'pass':'fail';$('free-margin').textContent=connected?`${fmt(data.free)} / ${fmt(data.used)}`:'—';
  pnl('realized-pnl',connected?data.realized_pnl:null);pnl('total-pnl',connected?data.total_pnl:null);
  $('positions').replaceChildren();$('trades').replaceChildren();
  const positions=connected?data.positions||[]:[];$('position-count').textContent=positions.length;

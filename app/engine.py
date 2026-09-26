@@ -43,7 +43,8 @@ class Engine:
                     except Exception:
                         self.discovery_error = 'Bazar siyahısı yenilənmədi; növbəti skanda təkrar yoxlanacaq.'
                         log.warning('Market discovery failed')
-                semaphore = asyncio.Semaphore(2)
+                # Binance calls are rate-limited centrally in Market; this bounds parallel JEV requests.
+                semaphore = asyncio.Semaphore(6)
                 await asyncio.gather(*(self._scan_symbol(symbol, semaphore) for symbol in self.symbols))
                 self.last_scan = int(time.time() * 1000)
                 self.next_scan = self.last_scan + self.settings.scan_seconds * 1000
@@ -71,7 +72,8 @@ class Engine:
                     try:
                         if cache_key not in self.ai_cache:
                             self.ai_cache[cache_key] = await self.jev.evaluate(state)
-                            if len(self.ai_cache) > 200:
+                            # Must hold every market; a 200 cap with 500+ symbols evicted all entries each scan.
+                            if len(self.ai_cache) > max(200, 3 * len(self.symbols)):
                                 del self.ai_cache[next(iter(self.ai_cache))]
                         ai = self.ai_cache[cache_key]
                     except JevError as e:

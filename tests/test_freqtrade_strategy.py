@@ -175,7 +175,8 @@ def test_background_failure_clears_previous_signal(strategy):
     assert strategy.signals=={} and not strategy.entries_enabled
 
 
-@pytest.mark.parametrize('requested,stop,exchange_max,expected', [(5,98,125,5),(100,98,125,23),(100,99.8,125,100),(100,99.8,20,20)])
+# Risk-based target: 2% stop -> 4x, 0.2% stop -> 20x; JEV choice, exchange max and the 20x ceiling cap it.
+@pytest.mark.parametrize('requested,stop,exchange_max,expected', [(5,98,125,4),(100,98,125,4),(2,98,125,2),(100,99.8,125,20),(100,99.8,10,10),(100,99.9,125,20)])
 def test_jev_leverage_is_dynamic_and_capped(strategy,requested,stop,exchange_max,expected):
     value=signal();value['leverage_requested']=requested;value['levels']['stop']=stop
     now=load(strategy,value)

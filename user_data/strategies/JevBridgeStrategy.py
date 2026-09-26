@@ -247,7 +247,11 @@ class JevBridgeStrategy(IStrategy):
         # Keep planned price loss + cost below half of margin. This is not an
         # exact liquidation calculation; Freqtrade additionally applies its buffer.
         risk_cap = max(1, math.floor(.50 / (distance + .0016)))
-        return float(max(1, math.floor(min(signal['leverage_requested'], max_leverage, risk_cap))))
+        # Risk-based leverage: the smallest leverage at which the 7% margin cap lets
+        # the position carry the full 0.5% capital risk budget at its planned stop.
+        # Tight stops get higher leverage, wide stops lower; the money at risk is the same.
+        target = math.ceil(.005 / (.07 * (distance + .0016)) - 1e-9)
+        return float(max(1, math.floor(min(target, signal['leverage_requested'], max_leverage, risk_cap, 20))))
 
     def custom_stoploss(self, pair, trade, current_time, current_rate, current_profit,
                         after_fill=False, **kwargs):
