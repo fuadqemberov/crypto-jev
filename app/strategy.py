@@ -37,8 +37,8 @@ def decide(result, ai, settings):
         reasons.append('Jev təsdiqi yoxdur.')
     else:
         a = ai['answers']
-        # Leverage has 11 choices, so its confidence practically never reaches the
-        # threshold; it sizes margin only and falls back to 1x in the executor.
+        # This gate applies only to the four entry assessments. Leverage uses
+        # its own path in Execution.signals; low confidence removes the JEV cap.
         if any(a[k]['confidence'] < settings.min_confidence for k in ('direction', 'momentum', 'regime', 'risk')):
             reasons.append('Jev confidence həddindən aşağıdır.')
         if a['direction']['choice'] != result['candidate']:

@@ -84,9 +84,9 @@ JEV driver sərbəst düşüncə mətni yox, strukturlaşdırılmış səbəb ka
 
 - **Yalnız dry-run:** strategiya real ticarət və backtest/hyperopt rejimində başlamır.
 - **Yalnız JEV istiqaməti:** model olmadan, API xətasında və ya demo rejimində giriş yoxdur.
-- **85% confidence:** direction/momentum/regime/risk üçün hədd tətbiq edilir. Leverage-in 11 variantı olduğundan onun confidence-i praktikada 85%-ə çatmır; ona görə leverage girişi bloklamır: confidence 85%-dən aşağıdırsa JEV tavanı tətbiq olunmur və leverage-i risk alqoritmi təkbaşına seçir. Leverage cavabı yoxdursa və ya etibarsızdırsa giriş yoxdur.
+- **90% confidence:** direction/momentum/regime/risk üçün hədd tətbiq edilir. Leverage-in 11 variantı olduğundan onun confidence-i praktikada 90%-ə çatmır; ona görə leverage girişi bloklamır: confidence 90%-dən aşağıdırsa JEV tavanı tətbiq olunmur və leverage-i risk alqoritmi təkbaşına seçir. Leverage cavabı yoxdursa və ya etibarsızdırsa giriş yoxdur.
 - **Mövqe sayı:** `max_open_trades=-1`. Balans, minimum order, aktiv simvol siyahısı, gündəlik zərər və cooldown qaydaları qalır. Freqtrade hər cüt üçün bir açıq mövqe saxlayır. Standart 5 simvol izlənirsə, say limitinin götürülməsi təkbaşına yeni simvollar əlavə etmir.
-- **Risk əsaslı leverage:** tətbiq olunan tam ədəd leverage `min(ceil(0.005 / (0.07 × (stop məsafəsi + 0.0016))), JEV seçimi, birja maksimumu, floor(0.50 / (stop məsafəsi + 0.0016)), 20)` düsturu ilə hesablanır. Birinci hədd 7% margin ilə tam 0.5% risk büdcəsini daşıyan ən kiçik leverage-dir: stop 2% → 4×, 1% → 7×, 0.5% → 11×, 0.2% → 20×. Stop-a dəyəndə itki leverage-dən asılı olmayaraq kapitalın ~0.5%-idir. JEV seçimi yalnız confidence ≥ 85% olduqda tavan kimi tətbiq olunur; model `1, 2, 3, 5, 10, 15, 20, 25, 50, 75, 100` seçimlərindən birini verir. Stop məsafəsi giriş qiymətinə nisbətdir. Bu konservativ yoxlamadır, dəqiq liquidation qiyməti deyil; Freqtrade əlavə liquidation buffer tətbiq edir. 100× təklif hər zaman 100× icra demək deyil. Məsələn, stop 2% uzaqdadırsa 100× təklif 4× olur.
+- **Risk əsaslı leverage:** tətbiq olunan tam ədəd leverage `min(ceil(0.005 / (0.07 × (stop məsafəsi + 0.0016))), JEV seçimi, birja maksimumu, floor(0.50 / (stop məsafəsi + 0.0016)), 20)` düsturu ilə hesablanır. Birinci hədd 7% margin ilə tam 0.5% risk büdcəsini daşıyan ən kiçik leverage-dir: stop 2% → 4×, 1% → 7×, 0.5% → 11×, 0.2% → 20×. Stop-a dəyəndə itki leverage-dən asılı olmayaraq kapitalın ~0.5%-idir. JEV seçimi yalnız confidence ≥ 90% olduqda tavan kimi tətbiq olunur; model `1, 2, 3, 5, 10, 15, 20, 25, 50, 75, 100` seçimlərindən birini verir. Stop məsafəsi giriş qiymətinə nisbətdir. Bu konservativ yoxlamadır, dəqiq liquidation qiyməti deyil; Freqtrade əlavə liquidation buffer tətbiq edir. 100× təklif hər zaman 100× icra demək deyil. Məsələn, stop 2% uzaqdadırsa 100× təklif 4× olur.
 - **Məbləğ:** Freqtrade limitsiz mövqe sayı + `stake_amount="unlimited"` qəbul etmir. Config-dəki 140 başlanğıc rəqəmdir; hər dövrədə kapitalın 7%-i/sərbəst balans ilə yenilənir, risk callback-i bunu daha da azalda bilər. Bu rəqəm birjanın leverage tier yoxlaması üçün yuxarı sərhəddir.
 - **Siqnalın yaşı:** standart 120 saniyə, bazar snapshot vaxtından hesablanır. Gələcək tarixli və köhnə siqnal rədd edilir.
 - **Təkrarsız giriş:** simvol + istiqamət + bağlanmış 15m şam əsasında ID. Freqtrade-in saxlanmış trade tarixçəsi restartdan sonra təkrar girişi də bloklayır. Trade bazasını silmək bu yaddaşı itirər.
@@ -123,7 +123,7 @@ Eyni hesabı başqa order icraçısı ilə paylaşmaq bu versiyanın əhatəsind
 | `TYPESAFE_MODEL` | `jev-latest`; faktiki model analiz tarixçəsində saxlanır |
 | `SYMBOLS` | `ALL`: bütün aktiv Binance USDT perpetual bazarları |
 | `SCAN_SECONDS` | Yeni `.env.example` üçün 60; skan bitəndən sonrakı gözləmə |
-| `MIN_AI_CONFIDENCE` | 0.85; gəlirlilik ehtimalı deyil |
+| `MIN_AI_CONFIDENCE` | 0.90; gəlirlilik ehtimalı deyil |
 | `MAX_SPREAD_BPS` | Analizdə 15; executor ayrıca maksimum 15 yoxlayır |
 | `MAX_FUNDING_RATE` | Ödəniş istiqamətində 0.0003; funding R:R hesabına daxil deyil |
 | `SIGNAL_TTL_SECONDS` | 120; icra siqnalının maksimum yaşı |
@@ -135,6 +135,8 @@ Eyni hesabı başqa order icraçısı ilə paylaşmaq bu versiyanın əhatəsind
 | `DATA_DIR` | Analiz və pause SQLite bazası, standart `data` |
 
 `Settings`-in env verilməyən fallback scan intervalı geriyə uyğunluq üçün 300 saniyədir.
+Confidence standartı 0.90-dır. Mövcud `.env` və ya proses mühitində `MIN_AI_CONFIDENCE=0.85` varsa, onu `0.90` edin və dashboard-u restart edin; `git pull` lokal `.env` faylını dəyişmir. Açıq şəkildə verilmiş konfiqurasiya standart dəyərdən üstündür. Eyni parametr giriş filtri, JEV leverage tavanının tətbiqi və JEV `CLOSE` qərarı üçün istifadə olunur; SL/TP çıxışları confidence-dən asılı deyil.
+
 Mövcud `.env` intervalı avtomatik dəyişdirilmir; daha tez analiz üçün `SCAN_SECONDS=60` seçə bilərsiniz.
 SYMBOLS=ALL bütün aktiv USDT perpetual bazarlarını hər skanda Binance-dən avtomatik tapır; coin sayı limiti yoxdur. Çox simvol/uzun AI cavabı bəzi siqnalları vaxtdan sala bilər; təhlükəsizlik üçün TTL-i kor-koranə artırmayın.
 JEV eyni semantik vəziyyət + şam + mövqe konteksti üçün cache edilir; maksimum 200 qeyd, restartda təmizlənir.
