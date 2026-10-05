@@ -187,7 +187,7 @@ class JevBridgeStrategy(IStrategy):
             price, timestamp = mark.get('price'), mark.get('observed_at')
             if not number(price) or price <= 0 or not number(timestamp) or not 0 <= now-timestamp <= MAX_AGE_MS:
                 raise ValueError('Position mark unavailable')
-            pnl = trade.calc_profit(rate=price).profit_abs
+            pnl = trade.calc_profit(rate=price)  # Freqtrade returns the absolute profit as a float.
             if not number(pnl):
                 raise ValueError('Position PnL unavailable')
             unrealized += pnl
@@ -385,6 +385,10 @@ class JevBridgeStrategy(IStrategy):
         previous = getattr(trade, 'stop_loss', None)
         previous = previous if number(previous) and previous > 0 else plan[0]
         stop = min(plan[0], previous) if trade.is_short else max(plan[0], previous)
+        # Freqtrade rebuilds the price from this ratio and rounds it toward the market
+        # (ROUND_DOWN short / ROUND_UP long). Float noise on a stop already on a tick
+        # would then move it one tick closer every loop until it is hit at a loss.
+        stop *= 1 + 1e-9 if trade.is_short else 1 - 1e-9
         return stoploss_from_absolute(stop, current_rate, is_short=trade.is_short, leverage=trade.leverage)
 
     def custom_exit(self, pair: str, trade: Trade, current_time: datetime, current_rate: float, current_profit: float, **kwargs: Any) -> str | None:

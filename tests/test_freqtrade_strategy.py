@@ -253,7 +253,7 @@ def test_daily_equity_cooldown_and_stale_mark(strategy, monkeypatch):
     assert risk['cooldowns']['BTC/USDT:USDT'] > now.timestamp()*1000
     strategy.wallets.get_total_stake_amount=lambda:2000.
     assert strategy._risk_state(now)['daily_loss_hit']
-    opened=SimpleNamespace(pair='ETH/USDT:USDT',calc_profit=lambda rate: SimpleNamespace(profit_abs=-50.))
+    opened=SimpleNamespace(pair='ETH/USDT:USDT',calc_profit=lambda rate: -50.)
     monkeypatch.setattr(Trade,'get_open_trades',lambda: [opened])
     strategy.marks={'ETH/USDT:USDT': {'price':100., 'observed_at':now.timestamp()*1000-16000}}
     assert not strategy._heartbeat(now)['risk_ready']
@@ -297,3 +297,27 @@ def test_final_confirmation_checks_actual_amount_risk(strategy, monkeypatch):
     monkeypatch.setattr(Trade,'get_trades_proxy',lambda **kw: [])
     assert not strategy.confirm_trade_entry(value['pair'],'market',100,100,'GTC',now,tag(value),'long')
     assert strategy.rejections['margin']==1
+
+
+@pytest.mark.parametrize('short,open_rate,plan,low,high', [
+    (True, .04877, .0492950097386, .0485, .0492),   # LAB 2026-10-05: stop walked to .04915
+    (True, .06029, .0609884446833, .0600, .0609),   # SLX 2026-10-05: stop walked to .06059
+    (False, .816, .803643201612, .805, .83),
+])
+def test_unchanged_plan_stop_does_not_creep_toward_price(strategy, short, open_rate, plan, low, high):
+    import random
+    now=datetime.now(timezone.utc)
+    stop, target = (plan, open_rate*.97) if short else (plan, open_rate*1.03)
+    trade=Trade(pair='LAB/USDT:USDT',exchange='binance',enter_tag=f'jev:{"b"*24}:{stop:.12g}:{target:.12g}:6',
+                open_rate=open_rate,stake_amount=140,amount=1000,is_open=True,open_date=now,
+                fee_open=.0005,fee_close=.0005,leverage=6,is_short=short,
+                price_precision=.00001 if open_rate < .1 else .0001,precision_mode_price=4)
+    Trade.session.add(trade);Trade.commit()
+    strategy.ft_stoploss_adjust(open_rate, trade, now, 0, 0, after_fill=True)
+    placed=trade.stop_loss
+    rng=random.Random(1)
+    for _ in range(2000):
+        rate=round(rng.uniform(low, high)/trade.price_precision)*trade.price_precision
+        strategy.ft_stoploss_adjust(rate, trade, now, 0, 0)
+    assert trade.stop_loss==placed==pytest.approx(plan, rel=3e-4)
+    assert not trade.is_stop_loss_trailing
