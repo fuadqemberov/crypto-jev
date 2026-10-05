@@ -25,6 +25,7 @@ class Settings:
     ai_cache_size: int = 3000
     ai_cache_ttl: int = 300
     ai_cache_persistent: bool = False
+    jev_requests_per_second: float = 2.
     close_confidence: float = .85
     bridge_poll_seconds: int = 1
     risk: RiskPolicy = field(default_factory=RiskPolicy)
@@ -57,6 +58,8 @@ class Settings:
                 raise ValueError(f'Invalid setting: {name}')
         if self.priority_seconds + self.symbol_timeout >= self.signal_ttl:
             raise ValueError('Priority interval + analysis timeout must be below signal TTL')
+        if not finite(self.jev_requests_per_second) or not .1 <= self.jev_requests_per_second <= 20:
+            raise ValueError('Invalid JEV_REQUESTS_PER_SECOND')
         if not finite(self.close_confidence) or not 0 <= self.close_confidence <= 1:
             raise ValueError('Invalid close confidence threshold')
 
@@ -92,6 +95,7 @@ class Settings:
                    recent_confidence_seconds=int(os.getenv('RECENT_CONFIDENCE_SECONDS', '900')),
                    ai_cache_size=int(os.getenv('AI_CACHE_SIZE', '3000')), ai_cache_ttl=int(os.getenv('AI_CACHE_TTL_SECONDS', '300')),
                    ai_cache_persistent=os.getenv('AI_CACHE_PERSISTENT', 'false').lower() == 'true',
+                   jev_requests_per_second=float(os.getenv('JEV_REQUESTS_PER_SECOND', '2')),
                    close_confidence=float(os.getenv('MIN_CLOSE_CONFIDENCE', '.85')),
                    bridge_poll_seconds=int(os.getenv('BRIDGE_POLL_SECONDS', '1')),
                    risk=RiskPolicy(capital_risk=float(os.getenv('CAPITAL_RISK', '.005')),

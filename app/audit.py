@@ -37,7 +37,10 @@ def export(data_dir: Path, hours: int, limit: int = 10000) -> dict[str, Any]:
     symbols = {trade['pair'].replace('/USDT:USDT', 'USDT') for trade in trades}
     analyses = []
     with closing(read_only(data_dir/'analysis.db')) as db:
-        for (payload,) in db.execute('SELECT payload FROM history ORDER BY id DESC LIMIT ?', (limit,)):
+        placeholders = ','.join('?' for _ in symbols) or 'NULL'
+        query = ("SELECT payload FROM history WHERE json_extract(payload, '$.observed_at') >= ? "
+                 f"AND json_extract(payload, '$.symbol') IN ({placeholders}) ORDER BY id DESC LIMIT ?")
+        for (payload,) in db.execute(query, (since.timestamp()*1000, *sorted(symbols), limit)):
             row = json.loads(payload)
             if row.get('symbol') not in symbols or row.get('observed_at', 0) < since.timestamp()*1000:
                 continue
@@ -47,7 +50,7 @@ def export(data_dir: Path, hours: int, limit: int = 10000) -> dict[str, Any]:
                 for key, value in ai.get('answers', {}).items() if key in ('direction', 'momentum', 'regime', 'risk', 'driver', 'position_action')}}
             analyses.append(safe)
     return dict(generated_at=now.isoformat(), since=since.isoformat(), limit=limit,
-                note='History reads the latest bounded rows; absence does not prove no decision existed.',
+                note='History reads the latest matching bounded rows; absence does not prove no decision existed.',
                 trades=trades, analyses=analyses)
 
 

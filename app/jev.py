@@ -4,6 +4,8 @@ from typing import Any
 from .config import Settings
 import asyncio
 import math
+import time
+from aiolimiter import AsyncLimiter
 import httpx
 
 
@@ -75,31 +77,74 @@ def parse_response(data: Any, questions: dict[str, Any] | None = None) -> dict[s
 class Jev:
     def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
         self.client, self.settings = client, settings
+        # One limiter per Engine/event loop. No startup burst: one token per interval.
+        self.limiter = AsyncLimiter(1, 1 / settings.jev_requests_per_second)
+        self.cooldown_until = 0.
+        self.requests = 0
+        self.suppressed = 0
+        self.last_error_code: str | None = None
+
+    def health(self) -> dict[str, Any]:
+        return dict(requests=self.requests, suppressed=self.suppressed,
+                    cooldown_seconds=round(max(0., self.cooldown_until-time.monotonic()), 1),
+                    last_error_code=self.last_error_code,
+                    requests_per_second=self.settings.jev_requests_per_second)
+
+    def _check_cooldown(self) -> None:
+        if time.monotonic() < self.cooldown_until:
+            self.suppressed += 1
+            raise JevError('Jev xidməti fasilədədir; giriş WAIT saxlanılır.', 'cooldown')
+
+    def _cooldown(self, seconds: float, code: str) -> None:
+        self.cooldown_until = max(self.cooldown_until, time.monotonic()+seconds)
+        self.last_error_code = code
 
     async def evaluate(self, state: dict[str, Any]) -> dict[str, Any]:
         if not self.settings.api_key:
             raise JevError('TYPESAFE_API_KEY təyin edilməyib.', 'missing_key')
+        self._check_cooldown()
         questions = {**QUESTIONS, **POSITION_QUESTIONS} if state.get('position') else QUESTIONS
         for attempt in range(3):
             try:
-                r = await self.client.post('https://api.typesafe.ai/v1/systemone',
-                    headers={'Authorization': 'Bearer ' + self.settings.api_key},
-                    json={'model': self.settings.model, 'state': state, 'questions': questions})
-                if r.status_code in (429, 529, 502, 503, 504) and attempt < 2:
-                    # Honor Retry-After; abandon this scan rather than retry too early.
+                async with self.limiter:
+                    # Another worker can open the shared cooldown while this one waits for a token.
+                    self._check_cooldown()
+                    self.requests += 1
+                    r = await self.client.post('https://api.typesafe.ai/v1/systemone',
+                        headers={'Authorization': 'Bearer ' + self.settings.api_key},
+                        json={'model': self.settings.model, 'state': state, 'questions': questions})
+                if r.status_code in (401, 403):
+                    self._cooldown(300, f'http_{r.status_code}')
+                    raise JevError('Jev API açarı və ya giriş icazəsi etibarsızdır.', f'http_{r.status_code}')
+                if r.status_code in (429, 529, 502, 503, 504):
                     try:
                         retry = float(r.headers.get('Retry-After', str(2 ** (attempt + 1))))
                     except ValueError:
-                        retry = 30
-                    if not math.isfinite(retry) or retry > 30:
+                        from email.utils import parsedate_to_datetime
+                        try:
+                            retry = parsedate_to_datetime(r.headers['Retry-After']).timestamp()-time.time()
+                        except (ValueError, TypeError, KeyError, OverflowError):
+                            retry = 30.
+                    if not math.isfinite(retry) or retry < 0:
+                        retry = 30.
+                    delay = max(2 ** (attempt + 1), retry)
+                    self._cooldown(delay, f'http_{r.status_code}')
+                    if delay > 30:
                         raise JevError('Jev limiti: sorğu sonrakı skana saxlanıldı.', 'retry_after')
-                    await asyncio.sleep(max(2 ** (attempt + 1), retry))
-                    continue
-                if r.status_code in (401, 403):
-                    raise JevError('Jev API açarı və ya giriş icazəsi etibarsızdır.', f'http_{r.status_code}')
+                    if attempt < 2:
+                        await asyncio.sleep(delay)
+                        continue
                 if r.is_error:
+                    self.last_error_code = f'http_{r.status_code}'
                     raise JevError(f'Jev xidməti HTTP {r.status_code} qaytardı.', f'http_{r.status_code}')
-                return parse_response(r.json(), questions)
-            except (httpx.HTTPError, ValueError) as e:
-                raise JevError('Jev cavabı alınmadı; siqnal WAIT olaraq saxlanıldı.', 'transport') from e
+                result = parse_response(r.json(), questions)
+                self.last_error_code = None
+                return result
+            except (httpx.HTTPError, ValueError) as exc:
+                self._cooldown(5., 'transport')
+                raise JevError('Jev cavabı alınmadı; siqnal WAIT olaraq saxlanıldı.', 'transport') from exc
+            except JevError as exc:
+                if exc.code != 'cooldown':
+                    self.last_error_code = exc.code
+                raise
         raise JevError('Jev sorğu limiti.', 'retry_limit')

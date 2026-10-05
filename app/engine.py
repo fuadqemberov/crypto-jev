@@ -283,6 +283,7 @@ class Engine:
         return dict(rows=rows, scanning=self.scanning, last_scan=self.last_scan, next_scan=self.next_scan,
             actionable_count=sum(signal['action'] in ('LONG', 'SHORT') for signal in bridge['signals']),
             market_count=len(self.symbols), market_symbols=self.symbols, scan_completed=self.scan_completed,
+            jev_health=self.jev.health(),
             discovery_error=self.discovery_error, demo=self.settings.demo, ai_configured=bool(self.settings.api_key),
             storage_error=self.storage_error, runtime_errors=sorted(self.runtime_errors), min_confidence=self.settings.min_confidence, model=self.settings.model,
             execution=self.execution.status(), metrics=self.metrics.status(), cache=self.ai_cache.stats(),

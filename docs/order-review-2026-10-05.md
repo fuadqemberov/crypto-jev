@@ -44,4 +44,4 @@ New regressions first failed against the old code (two precision cases and real 
 The corrected version passes these and the full suite. Existing DBs and four/five-part entry tags survive.
 Restart dashboard and Freqtrade after updating; do not erase databases or widen existing stops.
 Export `python -m app.audit --hours 6` for deeper analysis of the JEV decisions. This reads the latest
-10,000 analysis rows; missing evidence beyond that limit is explicitly documented.
+10,000 matching analysis rows; missing evidence beyond that limit is explicitly documented.

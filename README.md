@@ -248,7 +248,7 @@ Yanlış, qeyri-sonlu və təhlükəsizlik tavanını aşan dəyərlər startup-
 node --check app/static/app.js
 ```
 
-199 backend test keçib; testlər real Freqtrade 2026.8 resolver/config/DB API ilə işləyir; exchange və AI cavabları mock-dur.
+211 backend test keçib; testlər real Freqtrade 2026.8 resolver/config/DB API ilə işləyir; exchange və AI cavabları mock-dur.
 `tests/operations-ui.cjs` şəbəkəsiz dashboard smoke testidir. Playwright və Chromium tələb edir.
 Bu mühitdə Chromium yüklənmədiyi üçün vizual browser yoxlaması tamamlanmayıb; JS sintaksis yoxlaması keçib.
 `tests/terminal-ui.cjs` ayrıca canlı bazar UI yoxlamasıdır; real order yaratmır.
@@ -310,8 +310,26 @@ Tarixçə və orderləri silmədən, DB-yə yazmadan son əməliyyatların qəra
 .venv/bin/python -m app.audit --hours 6
 ```
 
-Nəticə `data/jev-audit.json`-dur: son 10,000 tarixçə sətrindən həmin vaxtda açılmış trade simvollarının
-analizlərini və trade sahələrini çıxarır. Açar, config və raw error mətni çıxarılmır.
+Nəticə `data/jev-audit.json`-dur: həmin vaxtda açılmış trade simvollarının son 10,000 uyğun
+analizini və trade sahələrini çıxarır. Açar, config və raw error mətni çıxarılmır.
 Sıx skanda aid analiz limitdən kənarda qala bilər; audit yoxdursa qərarın doğruluğunu iddia etməyin.
 DB-lər silinibsə audit əvvəlki trade/analizi geri gətirmir. Gəlirlilik üçün ayrıca gələcək paper nəticələri
 lazımdır; üç itkiyə uyğun threshold optimizasiyası tətbiq edilməyib.
+
+## GitHub inteqrasiyası: aiolimiter
+
+[mjpieters/aiolimiter](https://github.com/mjpieters/aiolimiter) (MIT, pinned 1.3.0) JEV HTTP sorğularına
+inteqrasiya edilib. Bir Engine/event loop üçün bir `AsyncLimiter` var; radar, priority və retry-lər
+ortaq limitdən keçir. Startup burst yoxdur. `JEV_REQUESTS_PER_SECOND=2` konservativ yerli default-dur,
+TypeSafe planının rəsmi quota-sı və ya gəlirlilik ayarı deyil; öz planınıza uyğun azaldın/artırın (0.1–20).
+
+401/403 bütün simvollar üçün 300 saniyə; transport xətası 5 saniyə fasilə yaradır.
+429/529/502/503/504 cavablarında `Retry-After` saniyə və HTTP-date formatında nəzərə alınır.
+30 saniyədən uzun gecikmə olduqda worker gözləyib TTL-ni yemir: WAIT qaytarır və növbəti skanlar
+ortaq fasiləyə əməl edir. Artıq göndərilmiş paralel sorğular ləğv edilmir. Bu, xidmət/key/schema problemi
+olduqda istiqamət uydurmur və provider problemini özü düzəltmir.
+
+`/api/status` daxilində `jev_health` request/suppression sayını, son error kodunu və fasilə müddətini göstərir.
+Yeni dependency üçün restart-dan əvvəl `.venv/bin/python -m pip install -e '.[paper]'` icra edin.
+[Upstream usage](https://aiolimiter.readthedocs.io/en/stable/) və real async/cancellation testləri izlənilib.
+İnteqrasiya infrastrukturu yaxşılaşdırır; qazanan ticarət strategiyası təqdim etmir.
