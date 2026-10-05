@@ -1,5 +1,8 @@
 """Generate local paper-only Freqtrade configuration without committing credentials."""
+from __future__ import annotations
+from typing import Any
 import json
+from dataclasses import asdict
 import os
 import secrets
 import argparse
@@ -13,14 +16,14 @@ from .config import Settings
 from .execution import pair_for
 
 
-def execution_pairlists(token):
+def execution_pairlists(token: str, poll: int = 1) -> list[dict[str, Any]]:
     return [{'method': 'RemotePairList',
              'pairlist_url': 'http://127.0.0.1:8082/api/execution/signals',
-             'bearer_token': token, 'refresh_period': 5, 'read_timeout': 2,
+             'bearer_token': token, 'refresh_period': poll, 'read_timeout': 2,
              'keep_pairlist_on_failure': False}]
 
 
-def build_config(settings, token, username, password):
+def build_config(settings: Settings, token: str, username: str, password: str) -> dict[str, Any]:
     return {
         '$schema': 'https://schema.freqtrade.io/schema.json',
         'strategy': 'JevBridgeStrategy', 'timeframe': '1m',
@@ -39,20 +42,21 @@ def build_config(settings, token, username, password):
         'exchange': {'name': 'binance', 'key': '', 'secret': '',
                      'ccxt_config': {'enableRateLimit': True}, 'ccxt_async_config': {},
                      'pair_whitelist': ['.*/USDT:USDT'] if settings.symbols == ('ALL',) else [pair_for(s) for s in settings.symbols], 'pair_blacklist': []},
-        'pairlists': execution_pairlists(token),
+        'pairlists': execution_pairlists(token, settings.bridge_poll_seconds),
         'telegram': {'enabled': False, 'token': '', 'chat_id': ''},
         'api_server': {'enabled': True, 'listen_ip_address': '127.0.0.1', 'listen_port': 8083,
                        'verbosity': 'error', 'enable_openapi': False, 'CORS_origins': [],
                        'username': username, 'password': password,
                        'jwt_secret_key': secrets.token_urlsafe(32), 'ws_token': secrets.token_urlsafe(32)},
         'bot_name': 'Crypto Jev Paper', 'initial_state': 'running', 'force_entry_enable': False,
-        'internals': {'process_throttle_secs': 5},
+        'internals': {'process_throttle_secs': settings.bridge_poll_seconds},
+        'jev_risk': asdict(settings.risk),
         'db_url': 'sqlite:///data/freqtrade-paper.sqlite',
         'jev_bridge': {'url': 'http://127.0.0.1:8082', 'token': token},
     }
 
 
-def initialize(root=Path('.')):
+def initialize(root: Path = Path('.')) -> Path:
     target = root / 'user_data' / 'config.paper.json'
     if target.exists():
         raise FileExistsError('user_data/config.paper.json mövcuddur; üzərinə yazılmadı.')
@@ -66,8 +70,9 @@ def initialize(root=Path('.')):
         'FREQTRADE_URL': 'http://127.0.0.1:8083',
     }
     symbols = existing.get('SYMBOLS') or 'ALL'
-    settings = Settings(symbols=tuple(s.strip().upper() for s in symbols.split(',') if s.strip()),
-                        bridge_token=values['BRIDGE_TOKEN'])
+    from dataclasses import replace
+    settings = replace(Settings.load(), symbols=tuple(s.strip().upper() for s in symbols.split(',') if s.strip()),
+                       bridge_token=values['BRIDGE_TOKEN'])
     config = build_config(settings, values['BRIDGE_TOKEN'], values['FREQTRADE_USER'], values['FREQTRADE_PASSWORD'])
     # Replace only managed connection fields, preserving the user's API key and other settings.
     lines = [line for line in original.splitlines() if line.split('=', 1)[0].strip() not in values]
@@ -75,23 +80,28 @@ def initialize(root=Path('.')):
     target.parent.mkdir(parents=True, exist_ok=True)
     (root / 'data').mkdir(exist_ok=True)
     # Exclusive creation refuses to overwrite an existing config/database or reset a wallet.
-    with target.open('x', encoding='utf-8') as handle:
+    descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
         handle.write(json.dumps(config, indent=2) + '\n')
-    env_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=root, prefix='.env.', delete=False) as handle:
+        temporary_env = Path(handle.name)
+        handle.write('\n'.join(lines) + '\n')
+    os.replace(temporary_env, env_path)
     if os.name != 'nt':
         target.chmod(0o600)
         env_path.chmod(0o600)
     return target
 
 
-def upgrade(root=Path('.')):
+def upgrade(root: Path = Path('.')) -> Path:
     """Migrate only execution settings; preserve wallet DB, credentials and symbols."""
     target = root / 'user_data' / 'config.paper.json'
     config = json.loads(target.read_text(encoding='utf-8'))
     if config.get('dry_run') is not True or config.get('strategy') != 'JevBridgeStrategy':
         raise ValueError('Yalnız JevBridgeStrategy dry-run konfiqurasiyası yenilənə bilər.')
-    changes = {'max_open_trades': -1, 'stake_amount': 140, 'stoploss': -.50,
-               'pairlists': execution_pairlists(config['jev_bridge']['token'])}
+    settings = Settings.load()
+    changes = {'jev_risk': asdict(settings.risk), 'internals': {**config.get('internals', {}), 'process_throttle_secs': settings.bridge_poll_seconds}, 'max_open_trades': -1, 'stake_amount': 140, 'stoploss': -.50,
+               'pairlists': execution_pairlists(config['jev_bridge']['token'], settings.bridge_poll_seconds)}
     if all(config.get(k) == v for k, v in changes.items()):
         return target
     backup = target.with_name(target.name + '.backup-' + secrets.token_hex(4))

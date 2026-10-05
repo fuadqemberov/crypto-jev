@@ -1,0 +1,30 @@
+[Unit]
+Description=Crypto JEV Freqtrade paper executor
+Wants=network-online.target crypto-jev.service
+After=network-online.target crypto-jev.service
+StartLimitIntervalSec=120
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=cryptojev
+WorkingDirectory=/opt/crypto-jev
+# Deliberately do not load .env: this process does not need the TypeSafe API key.
+ExecStart=/opt/crypto-jev/.venv/bin/python -m freqtrade trade --config /opt/crypto-jev/user_data/config.paper.json --strategy-path /opt/crypto-jev/user_data/strategies
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/crypto-jev/data /opt/crypto-jev/user_data
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

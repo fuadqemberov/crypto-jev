@@ -27,6 +27,7 @@ def strategy():
     instance = StrategyResolver.load_strategy(config)
     validate_config_consistency(config)
     instance.bot_start()
+    instance.wallets = SimpleNamespace(get_total_stake_amount=lambda: 2000, get_available_stake_amount=lambda: 2000)
     instance.dp = SimpleNamespace(orderbook=lambda pair, depth: {'bids': [[99.995, 1]], 'asks': [[100.005, 1]]})
     yield instance
     instance.executor.shutdown(wait=True, cancel_futures=True)
@@ -35,7 +36,7 @@ def strategy():
 
 def signal(action='LONG'):
     now = datetime.now(timezone.utc)
-    return dict(id='a'*24, pair='BTC/USDT:USDT', action=action, leverage_requested=1,
+    return dict(id='a'*24, pair='BTC/USDT:USDT', action=action, leverage_requested=1, funding_cost=0.,
                 observed_at=int(now.timestamp()*1000)-100, expires_at=int(now.timestamp()*1000)+120000,
                 levels=dict(entry=100, stop=98 if action=='LONG' else 102, target=104 if action=='LONG' else 96))
 
@@ -58,10 +59,11 @@ def test_bridge_to_entry_and_risk_sizing(strategy, tmp_path, monkeypatch):
     from app.store import Store
     store = Store(tmp_path/'flow.db')
     execution = Execution(Settings(), None, store)
-    execution.snapshot = dict(connected=True, state='running', observed_at=int(time.time()*1000), positions=[])
+    from test_execution import connected
+    connected(execution)
     value = signal()
     row = dict(symbol='BTCUSDT', observed_at=value['observed_at'], decision='LONG',
-               levels=value['levels'], frames={'15m': {'close_time': 123}},
+               levels={**value['levels'], 'funding_cost': 0.}, frames={'15m': {'close_time': 123}},
                ai={'answers': {'leverage': {'choice': '1', 'confidence': .95}}},
                error=None, ai_error=None)
     payload = execution.signals([row])
@@ -72,7 +74,7 @@ def test_bridge_to_entry_and_risk_sizing(strategy, tmp_path, monkeypatch):
     assert data.iloc[-1].enter_long == 1
     entry_tag = data.iloc[-1].enter_tag
     monkeypatch.setattr(Trade, 'get_trades_proxy', lambda **kw: [])
-    strategy.wallets = SimpleNamespace(get_total_stake_amount=lambda: 2000)
+    strategy.wallets = SimpleNamespace(get_total_stake_amount=lambda: 2000, get_available_stake_amount=lambda: 2000)
     assert strategy.custom_stake_amount(value['pair'],now,100,400,5,2000,1,entry_tag,'long') == 140
     assert strategy.confirm_trade_entry(value['pair'],'market',1.4,100,'GTC',now,entry_tag,'long')
     store.close()
@@ -80,7 +82,7 @@ def test_bridge_to_entry_and_risk_sizing(strategy, tmp_path, monkeypatch):
 
 def load(strategy, value, enabled=True):
     now=datetime.now(timezone.utc)
-    strategy._accept(dict(version=2, mode='dry_run', generated_at=int(now.timestamp()*1000),
+    strategy._accept(dict(version=3, risk_policy=strategy.policy.identity, mode='dry_run', generated_at=int(now.timestamp()*1000),
                           entries_enabled=enabled, signals=[value]), now.timestamp()*1000)
     return now
 
@@ -102,7 +104,7 @@ def test_real_framework_loads_config_and_dry_only(strategy):
 def test_entry_confirmation_and_7_percent_margin(strategy, monkeypatch, side):
     value=signal(side); now=load(strategy,value)
     monkeypatch.setattr(Trade, 'get_trades_proxy', lambda **kw: [])
-    strategy.wallets=SimpleNamespace(get_total_stake_amount=lambda: 2000)
+    strategy.wallets=SimpleNamespace(get_total_stake_amount=lambda: 2000, get_available_stake_amount=lambda: 2000)
     assert strategy.confirm_trade_entry(value['pair'],'market',1,100,'GTC',now,tag(value),side.lower())
     assert not strategy.confirm_trade_entry(value['pair'],'market',1,101,'GTC',now,tag(value),side.lower())
     assert strategy.custom_stake_amount(value['pair'],now,100,400,5,2000,1,tag(value),side.lower()) == 140
@@ -192,10 +194,10 @@ def test_invalid_leverage_never_becomes_entry(strategy,bad):
 def test_higher_leverage_reduces_margin_with_same_risk_budget(strategy,monkeypatch):
     value=signal();value['leverage_requested']=20;now=load(strategy,value)
     monkeypatch.setattr(Trade,'get_trades_proxy',lambda **kw: [])
-    strategy.wallets=SimpleNamespace(get_total_stake_amount=lambda:2000)
+    strategy.wallets=SimpleNamespace(get_total_stake_amount=lambda:2000, get_available_stake_amount=lambda:2000)
     stake=strategy.custom_stake_amount(value['pair'],now,100,140,1,2000,20,tag(value),'long')
-    assert stake==pytest.approx(10/(.0216*20))
-    assert stake*20*.0216==pytest.approx(10)
+    assert stake==pytest.approx(10/(.021584*20))
+    assert stake*20*.021584==pytest.approx(10)
 
 
 def test_unlimited_count_uses_numeric_stake_and_preserves_old_trade_plan(strategy):
@@ -218,6 +220,7 @@ def test_upgrade_restores_tighter_stop_after_freqtrade_reinitializes(strategy):
                 is_stop_loss_trailing=False,price_precision=8,precision_mode_price=2)
     Trade.session.add(trade);Trade.commit()
     strategy.preserved_stops={trade.id:95}
+    strategy.marks={'BTC/USDT:USDT': {'price':100, 'observed_at':now.timestamp()*1000}}
     Trade.stoploss_reinitialization(-.5)
     assert trade.stop_loss==50
     strategy.executor.shutdown();strategy.executor=Mock()
@@ -225,3 +228,70 @@ def test_upgrade_restores_tighter_stop_after_freqtrade_reinitializes(strategy):
     strategy.bot_loop_start(now)
     assert trade.stop_loss==95
     assert strategy.custom_stoploss(trade.pair,trade,now,100,0)==pytest.approx(.05)
+
+
+def test_envelope_expiry_revokes_signal_before_its_own_ttl(strategy):
+    value=signal(); now=load(strategy,value)
+    assert strategy._signal(value['pair'], now)
+    assert strategy._signal(value['pair'], now+timedelta(seconds=16)) is None
+
+
+def test_real_exchange_credentials_rejected(strategy):
+    strategy.config['exchange']['key']='not-a-real-key'
+    with pytest.raises(ValueError, match='credentials'): strategy.bot_start()
+
+
+def test_daily_equity_cooldown_and_stale_mark(strategy, monkeypatch):
+    now=datetime.now(timezone.utc)
+    closed=SimpleNamespace(pair='BTC/USDT:USDT', close_profit_abs=-70., close_date_utc=now-timedelta(seconds=10))
+    monkeypatch.setattr(Trade,'get_trades_proxy',lambda **kw: [closed] if kw.get('is_open') is False else [])
+    strategy.wallets.get_total_stake_amount=lambda:4000.
+    risk=strategy._risk_state(now)
+    assert risk['equity']==4000 and not risk['daily_loss_hit']
+    assert risk['cooldowns']['BTC/USDT:USDT'] > now.timestamp()*1000
+    strategy.wallets.get_total_stake_amount=lambda:2000.
+    assert strategy._risk_state(now)['daily_loss_hit']
+    opened=SimpleNamespace(pair='ETH/USDT:USDT',calc_profit=lambda rate: SimpleNamespace(profit_abs=-50.))
+    monkeypatch.setattr(Trade,'get_open_trades',lambda: [opened])
+    strategy.marks={'ETH/USDT:USDT': {'price':100., 'observed_at':now.timestamp()*1000-16000}}
+    assert not strategy._heartbeat(now)['risk_ready']
+    strategy.marks={'ETH/USDT:USDT': {'price':100., 'observed_at':now.timestamp()*1000}}
+    assert strategy._risk_state(now)['equity']==1950.
+
+
+def test_strategy_and_engine_share_daily_veto(strategy, tmp_path, monkeypatch):
+    from app.execution import Execution
+    from app.store import Store
+    from test_execution import connected, row
+    now=datetime.now(timezone.utc)
+    closed=SimpleNamespace(pair='ETH/USDT:USDT',close_profit_abs=-70.,close_date_utc=now-timedelta(hours=1))
+    monkeypatch.setattr(Trade,'get_trades_proxy',lambda **kw: [closed] if kw.get('is_open') is False else [])
+    store=Store(tmp_path/'shared.db'); execution=Execution(Settings(), None, store); connected(execution)
+    report=strategy._heartbeat(now)
+    execution.receive_heartbeat(report)
+    assert 'daily_loss' in execution.signals([row()])['diagnostics']['blocks']
+    strategy.entries_enabled=True
+    assert not strategy._entry_guard('BTC/USDT:USDT', now)
+    store.close()
+
+
+def test_short_stop_restored_once_and_then_read_from_trade(strategy):
+    now=datetime.now(timezone.utc)
+    trade=Trade(pair='BTC/USDT:USDT',exchange='binance',enter_tag='jev:old:110:80',
+        open_rate=100,stake_amount=140,amount=1.4,is_open=True,open_date=now,
+        fee_open=.0005,fee_close=.0005,leverage=1,is_short=True,
+        stop_loss=105,initial_stop_loss=105,initial_stop_loss_pct=-.05,
+        is_stop_loss_trailing=False,price_precision=8,precision_mode_price=2)
+    Trade.session.add(trade);Trade.commit()
+    strategy.preserved_stops={trade.id:105}
+    Trade.stoploss_reinitialization(-.5)
+    strategy._restore_stops()
+    assert trade.stop_loss==105 and not strategy.preserved_stops
+    assert strategy.custom_stoploss(trade.pair,trade,now,100,0)==pytest.approx(.05)
+
+
+def test_final_confirmation_checks_actual_amount_risk(strategy, monkeypatch):
+    value=signal();now=load(strategy,value)
+    monkeypatch.setattr(Trade,'get_trades_proxy',lambda **kw: [])
+    assert not strategy.confirm_trade_entry(value['pair'],'market',100,100,'GTC',now,tag(value),'long')
+    assert strategy.rejections['margin']==1

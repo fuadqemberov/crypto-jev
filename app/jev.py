@@ -1,10 +1,13 @@
 """TypeSafe's documented System One HTTP protocol, not Chat Completions."""
+from __future__ import annotations
+from typing import Any
+from .config import Settings
 import asyncio
 import math
 import httpx
 
 
-def choice(instructions, criteria):
+def choice(instructions: str, criteria: dict[str, str]) -> dict[str, Any]:
     return dict(type='choice', instructions=instructions, criteria=criteria)
 
 
@@ -47,7 +50,7 @@ class JevError(Exception):
     pass
 
 
-def parse_response(data, questions=None):
+def parse_response(data: Any, questions: dict[str, Any] | None = None) -> dict[str, Any]:
     questions = questions or QUESTIONS
     if not isinstance(data, dict) or not isinstance(data.get('model'), str) or not data['model']:
         raise JevError('Jev cavabında model yoxdur.')
@@ -70,10 +73,10 @@ def parse_response(data, questions=None):
 
 
 class Jev:
-    def __init__(self, client, settings):
+    def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
         self.client, self.settings = client, settings
 
-    async def evaluate(self, state):
+    async def evaluate(self, state: dict[str, Any]) -> dict[str, Any]:
         if not self.settings.api_key:
             raise JevError('TYPESAFE_API_KEY təyin edilməyib.')
         questions = {**QUESTIONS, **POSITION_QUESTIONS} if state.get('position') else QUESTIONS

@@ -38,6 +38,8 @@ def test_discovery_refresh_and_recovery(tmp_path):
             engine = Engine(Settings(symbols=('ALL',)), client, store)
             async def discover(): return ('BTCUSDT', 'ETHUSDT')
             async def snapshot(symbol): return demo_snapshot(symbol)
+            async def ranking(symbols): return symbols
+            engine.market.volume_ranking = ranking
             engine.market.discover_symbols = discover
             engine.market.snapshot = snapshot
             await engine.scan()

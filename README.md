@@ -1,202 +1,265 @@
-# Crypto Jev · Freqtrade Paper Lab
+# Crypto JEV — paper futures terminalı
 
-**JEV qərar verir, Python riskləri yoxlayır, Freqtrade virtual əməliyyatları icra edir.**
-Azərbaycan dilində mövcud FastAPI paneli saxlanılıb; ayrıca Freqtrade prosesi ilə iki istiqamətli inteqrasiya əlavə olunub.
+Python 3.12+ · Freqtrade **2026.8** · Azərbaycan dilində dashboard.
 
-> Bu versiya yalnız **paper trading** üçündür. Başlanğıc hesab **2,000 USDT**, mövqe sayı üçün sabit limit yoxdur. Leverage-i **JEV seçir**; birja və stop məsafəsi tətbiq olunan dəyəri azalda bilər.
-> Gəlirlilik sübut edilməyib. JEV confidence qazanc ehtimalı deyil. Real pul və exchange API açarı lazım deyil.
+**JEV istiqaməti seçir.** Python yalnız yoxlayır, veto edir və mövqe ölçüsünü məhdudlaşdırır.
+Yalnız virtual USDT ilə dry-run mümkündür. Live trading, real exchange key/secret və JEV
+backtest/hyperopt strategiya başlanğıcında bloklanır. TypeSafe açarı yalnız JEV sorğuları üçündür.
 
-## Niyə Python?
-
-Freqtrade-in native strategiya interfeysi və mövcud layihə Python-dadır. Əsas gecikmə şəbəkə/JEV sorğularıdır.
-Rust-a keçmək model cavabını sürətləndirmir, əlavə servis və sinxronizasiya riski yaradır.
-İki bazar paralel analiz edilir; Binance üçün ümumi rate limiter saxlanılır.
-Freqtrade JEV-ni gözləmir: ayrı thread yalnız lokal, artıq hazırlanmış siqnalları oxuyur. SL/TP Freqtrade dövrəsində qalır.
-Bu HFT deyil: analiz 15m/1h/4h kontekstlidir, Freqtrade 1m şam və təxminən 5 saniyəlik dövrə istifadə edir.
-
-## Windows — Docker olmadan
-
-1. Python **3.12**, Git və internet bağlantısı tələb olunur.
-2. Reponu klonlayın və `run-paper.cmd` işlədin. Skript virtual mühit, asılılıqlar və lokal bağlantı konfiqurasiyası yaradır.
-3. Lokal `.env` faylında `TYPESAFE_API_KEY=...` yazın. Açarı Git-ə və ya söhbətə göndərməyin.
-4. Dashboard prosesini yenidən başladın. Panel: **http://127.0.0.1:8082**.
-
-`run-paper.cmd` dashboard üçün ayrıca pəncərə, Freqtrade üçün cari terminal açır.
-İkinci dəfə başlamazdan əvvəl köhnə prosesləri dayandırın. İlk startda API açarı yoxdursa əməliyyat açılmır.
-Mövcud virtual balans və əməliyyat bazası restartda sıfırlanmır. Lokal işləmək üçün hər iki proses açıq qalmalıdır.
-Python/TA-Lib quraşdırılması Windows-da problem yaradarsa WSL2 alternativdir; Docker tələb deyil.
-
-Yalnız əvvəlki analiz paneli üçün `run.cmd` hələ də işləyir; Freqtrade olmadan order icrası yoxdur.
-
-### Mövcud quraşdırmanı yeniləmək
-
-İki prosesi dayandırın, `git pull` edin və `run-paper.cmd` işlədin. Lokal config avtomatik yenilənir;
-API açarları, simvol siyahısı, database yolu və əməliyyat tarixçəsi saxlanılır. Köhnə config-in məxfi backup-ı yaradılır.
-Linux-da restartdan əvvəl `.venv/bin/python -m app.paper --upgrade` işlədin.
-Dashboard və Freqtrade birlikdə yenilənməlidir: yeni bridge protokolu v2-dir, köhnə siqnallar giriş yaratmır.
-Yeniləmə açıq mövqenin leverage-ini dəyişmir; yalnız yeni girişlər üçün seçim edilir.
-
-## Linux / macOS — iki terminal
+## Quraşdırma
 
 ```bash
-git clone https://github.com/fuadqemberov/crypto-jev.git
-cd crypto-jev
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -e '.[paper,test]'
-.venv/bin/python -m app.paper
-# .env daxilində TYPESAFE_API_KEY əlavə edin.
+cp .env.example .env
 ```
 
-Terminal 1:
+`.env` içində `TYPESAFE_API_KEY` daxil edin. Sonra:
+
+```bash
+.venv/bin/python -m app.paper
+```
+
+Bu komanda yeni virtual hesab üçün 2000 USDT konfiqurasiyası, təsadüfi bridge/API credential-ları
+və `.env` əlaqə parametrlərini yaradır. Mövcud konfiqurasiyanı əvəz etmir.
+İki terminalda, repo kökündən:
 
 ```bash
 .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8082 --workers 1
 ```
 
-Terminal 2, eyni repo qovluğunda:
-
 ```bash
 .venv/bin/python -m freqtrade trade --config user_data/config.paper.json --strategy-path user_data/strategies
 ```
 
-`python -m app.paper` unikal bağlantı tokeni və Freqtrade API parolu yaradır.
-Mövcud `.env` API açarını saxlayır; mövcud `config.paper.json` üzərinə yazmır.
-İki tətbiq eyni lokal maşında işləməlidir. Freqtrade **2026.8** versiyasına pin olunub.
-Setup-dan sonra `SYMBOLS` dəyişərsə Freqtrade config-də `exchange.pair_whitelist` də uyğunlaşdırılmalıdır.
+Dashboard: <http://127.0.0.1:8082>. Windows: Python 3.12+ quraşdırın və `run-paper.cmd` işlədin.
+Hər iki proses eyni virtual environment-də quraşdırılmış `app` paketindən istifadə edir.
+Birdən çox engine worker işlətməyin. `DEMO_MODE=true` sintetik məlumat göstərir və heç bir giriş açmır.
 
-## Komponentlər və məlumat axını
+## Arxitektura və məlumat axını
 
-| Komponent | Məsuliyyət |
+```mermaid
+flowchart TD
+    Market["Binance public data"] --> Cache["Bulk quotes və closed-candle cache"]
+    Cache --> Radar["Tam bazar radar skanı"]
+    Cache --> Priority["Prioritet skan"]
+    Radar --> JEV["JEV və TTL-li LRU cache"]
+    Priority --> JEV
+    JEV --> Guards["Risk veto-ları və tarixçənin diskə yazılması"]
+    Guards --> Bridge["HTTP bridge v3"]
+    Bridge --> Executor["Freqtrade paper executor"]
+    Executor --> Heartbeat["Heartbeat, equity və risk statusu"]
+    Heartbeat --> Bridge
+    Heartbeat --> Priority
+    Bridge --> UI["Azərbaycan dilində dashboard"]
+```
+
+Engine/dashboard bir prosesdir; Freqtrade ayrıca prosesdir. Ortaq `app/risk.py` heç bir order
+və istiqamət yaratmır. Freqtrade yekun qiymət, wallet, cooldown, risk və təkrar siqnal yoxlamasını edir.
+
+### Adaptive scan
+
+- `SYMBOLS=ALL`: aktiv USDT perpetual bazarları hər radar dövründə yenidən kəşf edilir.
+- Radar bütün bazarları məhdud worker sayı ilə analiz edir. 500 bazar üçün 500 coroutine növbəsi yaradılmır.
+- Ayrı priority worker-ları bütün açıq mövqeləri, son yüksək-confidence istiqamətli JEV cavablarını
+  və 24 saatlıq quote volume sıralamasını izləyir. Açıq mövqelərə say limiti tətbiq edilmir;
+  əlavə watchlist `PRIORITY_SIZE` ilə məhduddur. Açıq mövqelər mövcud discovery siyahısından çıxsa da yoxlanır.
+- Eyni simvol üçün paralel analiz təkrarlanmır. Hər nəticə tarixçəyə yazıldıqdan dərhal sonra görünür;
+  bütün skanın bitməsi gözlənilmir.
+- Bir simvol üçün 35 saniyəlik deadline var. AI cavabından sonra bazar/position semantic context
+  yenidən yoxlanır; dəyişibsə WAIT. Köhnə analizin timestamp-i kor-koranə yenilənmir.
+- Hər siqnalda `observed_at`, `expires_at`, envelope-də `generated_at` var. İcra zamanı TTL
+  və əlavə 15 saniyəlik bridge envelope freshness yenidən yoxlanır. TTL uzatmaq təhlükəsizliyi əvəz etmir.
+
+### Sürət və cache
+
+| Profil | Priority fasiləsi | Radar worker | Priority worker | Siqnal TTL |
+|---|---:|---:|---:|---:|
+| conservative | 30 s | 2 | 1 | 180 s |
+| balanced (default) | 15 s | 4 | 2 | 120 s |
+| aggressive | 10 s | 6 | 3 | 90 s |
+
+Profil **skan sürətini** dəyişir; risk büdcəsini artırmır. Fasilələr dövr bitdikdən sonra hesablanır.
+Məsələn, priority dövrü 8 saniyə çəkərsə balanced rejimdə təkrar interval təxminən 23 saniyədir.
+Soyuq cache zamanı bütün bazarları yükləmək hələ də vaxt aparır. Binance üçün ortaq rate limiter,
+weight əsasında gözləmə və 429/418 cooldown saxlanılır. Daha çox paralellik exchange limitini aşmaq icazəsi deyil.
+
+Bulk bid/ask, mark/funding və server vaxtı 2 saniyə paylaşılır. Şam indikatorları yalnız bağlanmış
+şam dəyişəndə yenidən hesablanır. JEV cache açarı prompt version, model, semantic context, position
+və bütün timeframe close timestamp-lərini əhatə edir. Cache hit yeni bazar yoxlamalarını keçməlidir.
+LRU ölçüsü default 3000, AI cavab TTL-i 300 saniyədir; TTL hit zamanı yenilənmir.
+
+`AI_CACHE_PERSISTENT=true` validated JEV cavablarını mövcud `analysis.db`-də əlavə cədvəldə saxlayır.
+Diskdə də ölçü/TTL/LRU limiti var. Prompt/model dəyişdikdə əvvəlki açarlar uyğun gəlmir; restart zamanı
+schema və TTL yenidən yoxlanır. Default `false`: restart ilk JEV sorğularını yeniləyir, əlavə disk yazısı yoxdur.
+Disk-cache xətası həmin analizi WAIT edir; tarixçə/control xətası girişləri bloklayır. Disk kilidi üçün
+200 ms timeout var; storage bloklanması sonsuz gözləmə yaratmır.
+
+Sübut edilən performans nəticəsi: 500 bazarlı bloklanmış radar testində ayrılmış priority worker
+radarı gözləmədən nəticə paylaşır. `pytest -q -s tests/test_resilience.py -k priority_progresses`
+yerli vaxt ölçüsünü göstərir. **Canlı JEV/Binance ilə uzunmüddətli fill-rate benchmark aparılmayıb**;
+real sürət şəbəkə, JEV latency, rate limit və açıq mövqelərin sayından asılıdır. Priority dövrü TTL
+büdcəsini aşırsa UI xəbərdarlıq göstərir. Heç bir gəlirlilik və ya siqnal icrası faizi vəd edilmir.
+
+## Qərarlar və risk
+
+İstifadə olunmayan texniki score çıxarılıb. EMA/RSI/MACD/volume semantic context olaraq JEV-ə verilir;
+Python trendə əsasən LONG/SHORT yaratmır. Volatility, price gap, spread, funding, RSI və net R:R veto-ları qalır.
+Entry üçün direction/momentum/regime/risk confidence default 0.90-dır. CLOSE default 0.85,
+leverage default 0.90-dır. Qeyri-müəyyən leverage **yeni girişi bloklayır**; artıq 100× cap-a çevrilmir.
+Pause və entry risk veto-ları təzə, açıq trade ID-sinə bağlı CLOSE qərarını dayandırmır.
+
+Ortaq risk hesabı, `e` giriş, `s` stop, `f` mənfi funding ehtiyatı üçün:
+
+```text
+loss_fraction = abs(e-s)/e + cost_per_side*(1+s/e) + f
+leverage_target = ceil(capital_risk / (margin_fraction*loss_fraction))
+leverage = min(target, JEV_request, exchange_max, 20, floor(0.50/loss_fraction))
+margin = min(equity*0.07, equity*0.005/(loss_fraction*leverage), available, executor_limits)
+```
+
+Minimum stake risk büdcəsinə sığmırsa sıfır stake qaytarılır. Yekun confirmation real order amount ilə
+stop riskini yenidən yoxlayır. Hard tavanlar: kapital riski 0.5%, margin 7%, margin itkisi 50%, leverage 20×.
+`.env` ilə bu tavanları azaltmaq olar, yuxarı qaldırmaq bloklanır. Gap/slippage zamanı faktiki itki planı aşa bilər;
+bu hesab dəqiq liquidation modeli deyil. Freqtrade əlavə liquidation buffer tətbiq edir.
+
+Funding müsbət/ mənfi istiqamətə görə yalnız mümkün ödəniş kimi ehtiyata alınır; mümkün gəlir kredit edilmir.
+Default bir funding period-un cari rate-i həm stop riskinə, həm R:R xərclərinə əlavə edilir.
+Bu konservativ ehtiyatdır, gələcək funding rate/settlement cədvəlinin proqnozu deyil.
+`FUNDING_RESERVE_PERIODS=0` ehtiyatı söndürür, funding veto-su və UI göstəricisi qalır.
+
+Gündəlik limit: **UTC gününün reallaşmış PnL-i + mənfi açıq PnL**, cari marked equity-nin 3%-i ilə
+müqayisə edilir. Müsbət açıq PnL reallaşmış gündəlik limit pozuntusunu silmir. Equity wallet + fresh
+open-position PnL əsasında hesablanır; köhnə/missing mark girişləri bloklayır. Günlük realized history
+Freqtrade DB-dən oxunur, restart limiti sıfırlamır. Bu high-water-mark drawdown deyil; cari equity həddidir.
+
+Cooldown default 300 saniyədir, bağlanmış trade-lərdən bərpa edilir və gecəyarısını keçir. Freqtrade-in
+StoplossGuard qoruması əlavə olaraq qalır. Eyni simvol/istiqamət/bağlanmış 15m şam ID-si DB-dəki
+`enter_tag` vasitəsilə təkrar girişə qarşı qorunur. Wallet əlçatanlığı ümumi margin istifadəsini məhdudlaşdırır;
+portfel korrelyasiyası və ayrıca ümumi risk büdcəsi bu versiyada modelləşdirilmir.
+
+## Bridge, təhlükəsizlik və müşahidə
+
+Protokol **v3** yalnız loopback HTTP və ən azı 32 simvolluq bearer token istifadə edir. Hər iki proses
+risk policy hash-inə razılaşmalıdır. Yanlış version, mode, timestamp, pair, ID, NaN/Infinity, leverage,
+stop geometry və pozulmuş payload fail-closed rədd edilir. Request/response ölçüsü məhduddur.
+
+Freqtrade network işini tək background thread-də aparır: risk heartbeat POST, sonra signals GET.
+Connection təkrar istifadə edilir; error zamanı 2/4/8/16/30 saniyə backoff var. Normal loop/pairlist
+refresh 1 saniyədir; iki background mərhələ və şam yüklənməsi səbəbi ilə bu 1 saniyəlik fill SLA deyil.
+15 saniyəlik heartbeat/telemetry yoxdursa entry yoxdur. Final callbacks köhnə bridge cache-ni də rədd edir.
+
+Dashboard-un “Sistem sağlamlığı və gecikmələr” hissəsi bunları göstərir:
+
+- Priority/radar dövr müddəti, per-symbol latency p50/p95, priority sayı, cache hit rate.
+- Bridge sağlamlığı/lag, pause, daily loss, TTL, storage, confidence, funding və digər blok səbəbləri.
+- Executor-un rejection sayğacları; bunlar callback cəhdləridir, unikal trade sayı deyil.
+
+Structured log-lar `stage`, `symbol`, `error_type` verir; credential, raw upstream body və exception
+mətnləri log-a çıxarılmır. Snapshot sayğacları proses restartında sıfırlanır; history, controls və trade-lər qalır.
+Ətraflı sahələr `/api/status` daxilində `metrics`, `cache`, `bridge`, `execution.executor_risk` altındadır.
+
+| Endpoint | Məqsəd / autentifikasiya |
 |---|---|
-| `app/market.py`, `indicators.py` | Binance USD-M, təzə bid/ask/mark, bağlanmış 15m/1h/4h şamlar və indikatorlar |
-| `app/jev.py` | TypeSafe System One API; istiqamət, rejim, momentum, risk, driver və açıq mövqe üçün HOLD/CLOSE |
-| `app/engine.py` | Maksimum iki paralel analiz, cache, təhlükəsizlik filtrləri və tarixçə |
-| `app/execution.py` | Tokenlə qorunan siqnal yayımı; Freqtrade-dən yalnız GET ilə hesab/mövqe məlumatı |
-| `user_data/strategies/JevBridgeStrategy.py` | Yeganə order icraçısı; Freqtrade virtual orderləri, stake, SL/TP və çıxışlar |
-| `app/static/` | Azərbaycan dilində radar, JEV cavabları, balans, margin, PnL və trade tarixçəsi |
+| `GET /api/status` | Radar, metrics, risk/bridge status; dashboard auth |
+| `GET /api/history` | Son 100 analiz; dashboard auth |
+| `GET /api/execution/signals` | v3 siqnallar + RemotePairList pairs; bearer |
+| `POST /api/execution/heartbeat` | Executor risk statusu; bearer |
+| `GET /api/execution/health` | Fresh engine/telemetry/heartbeat yoxlaması, 200/503; bearer |
+| `POST /api/execution/pause`, `/resume` | Persisted entry control; dashboard auth + `X-Crypto-Jev: 1` |
+| `POST /api/scan` | Manual radar skanı, minimum 60 s; dashboard auth + custom header |
+| `GET /health` | Sadə HTTP liveness; trading readiness deyil |
 
-JEV açıq mövqenin ID, istiqamət və əvvəlcədən hesablanmış mənfəət/zərər vəziyyətini də alır.
-`CLOSE` yalnız həmin trade ID-yə aiddir; köhnə qərar yeni mövqeni bağlaya bilməz.
-`WAIT` “mövcud mövqeni bağla” demək deyil. Hesablamalar/SL/TP rəqəmləri AI-yə həvalə edilmir.
-JEV driver sərbəst düşüncə mətni yox, strukturlaşdırılmış səbəb kateqoriyasıdır.
+`.env`, `config.paper.json`, credential backup-lar və DB-lər git-ə daxil edilmir. Yeni credential faylları
+POSIX-də 0600 ilə yaradılır, migration atomik replacement edir. Public giriş lazımdırsa HTTPS reverse proxy,
+`DASHBOARD_USER` + `DASHBOARD_PASSWORD` və firewall istifadə edin; 8082/8083 loopback-da qalmalıdır.
+Token URL/query string-ə qoyulmur. JEV açarı Freqtrade config-inə yazılmır.
 
-## İcra və risk qaydaları
+## Mövcud istifadəçilər üçün migration
 
-- **Yalnız dry-run:** strategiya real ticarət və backtest/hyperopt rejimində başlamır.
-- **Yalnız JEV istiqaməti:** model olmadan, API xətasında və ya demo rejimində giriş yoxdur.
-- **90% confidence:** direction/momentum/regime/risk üçün hədd tətbiq edilir. Leverage-in 11 variantı olduğundan onun confidence-i praktikada 90%-ə çatmır; ona görə leverage girişi bloklamır: confidence 90%-dən aşağıdırsa JEV tavanı tətbiq olunmur və leverage-i risk alqoritmi təkbaşına seçir. Leverage cavabı yoxdursa və ya etibarsızdırsa giriş yoxdur.
-- **Mövqe sayı:** `max_open_trades=-1`. Balans, minimum order, aktiv simvol siyahısı, gündəlik zərər və cooldown qaydaları qalır. Freqtrade hər cüt üçün bir açıq mövqe saxlayır. Standart 5 simvol izlənirsə, say limitinin götürülməsi təkbaşına yeni simvollar əlavə etmir.
-- **Risk əsaslı leverage:** tətbiq olunan tam ədəd leverage `min(ceil(0.005 / (0.07 × (stop məsafəsi + 0.0016))), JEV seçimi, birja maksimumu, floor(0.50 / (stop məsafəsi + 0.0016)), 20)` düsturu ilə hesablanır. Birinci hədd 7% margin ilə tam 0.5% risk büdcəsini daşıyan ən kiçik leverage-dir: stop 2% → 4×, 1% → 7×, 0.5% → 11×, 0.2% → 20×. Stop-a dəyəndə itki leverage-dən asılı olmayaraq kapitalın ~0.5%-idir. JEV seçimi yalnız confidence ≥ 90% olduqda tavan kimi tətbiq olunur; model `1, 2, 3, 5, 10, 15, 20, 25, 50, 75, 100` seçimlərindən birini verir. Stop məsafəsi giriş qiymətinə nisbətdir. Bu konservativ yoxlamadır, dəqiq liquidation qiyməti deyil; Freqtrade əlavə liquidation buffer tətbiq edir. 100× təklif hər zaman 100× icra demək deyil. Məsələn, stop 2% uzaqdadırsa 100× təklif 4× olur.
-- **Məbləğ:** Freqtrade limitsiz mövqe sayı + `stake_amount="unlimited"` qəbul etmir. Config-dəki 140 başlanğıc rəqəmdir; hər dövrədə kapitalın 7%-i/sərbəst balans ilə yenilənir, risk callback-i bunu daha da azalda bilər. Bu rəqəm birjanın leverage tier yoxlaması üçün yuxarı sərhəddir.
-- **Siqnalın yaşı:** standart 120 saniyə, bazar snapshot vaxtından hesablanır. Gələcək tarixli və köhnə siqnal rədd edilir.
-- **Təkrarsız giriş:** simvol + istiqamət + bağlanmış 15m şam əsasında ID. Freqtrade-in saxlanmış trade tarixçəsi restartdan sonra təkrar girişi də bloklayır. Trade bazasını silmək bu yaddaşı itirər.
-- **Margin:** Freqtrade-in istifadə oluna bilən ümumi stake kapitalının maksimum 7%-i; 2,000 üçün 140 USDT. Açıq unrealized PnL bu stake bazasına əlavə edilmir.
-- **Mövqe riski:** planlaşdırılmış stop və təxmini round-trip xərc birlikdə kapitalın maksimum 0.5%-i. Buna görə margin bəzən 7%-dən azdır. Bu, gap/slippage zamanı zəmanətli zərər tavanı deyil.
-- **Yeni giriş veto-su:** həmin UTC günündə reallaşmış zərər ilkin virtual hesabın 3%-inə çatarsa girişlər bloklanır. 2,000 üçün 60 USDT. Bu limit açıq zərəri avtomatik bağlamır.
-- **Cooldown:** hər mövqedən sonra 5 dəqiqə; 60 dəqiqədə 3 stop-loss sonrası 30 dəqiqəlik StoplossGuard.
-- **Cari order yoxlaması:** təzə order-book spread maksimum 15 bps; siqnal girişindən qiymət fərqi maksimum 0.3%; xərc sonrası R:R minimum 1.5.
-- **SL/TP:** başlanğıc plan SL 2×ATR, TP 4×ATR. Leverage ilə uyğunlaşmaq üçün margin stop fallback-i 5%-dən 50%-ə dəyişib; normal stop yenə qiymət üzrə ATR planıdır. Leverage yoxlaması planlaşdırılmış stop + xərcin margin-in 50%-ni keçməsinə icazə vermir. Kapital üzrə 0.5% risk büdcəsi saxlanılır. Bu limitlər gap/slippage zamanı zəmanət deyil. Target və maksimum 4 saat saxlama limiti qalır. Mövcud mövqenin saxlanmış stop-u genişləndirilmir.
-- **Fasilə:** paneldə “Girişləri dayandır” diskdə saxlanılır. Yalnız yeni girişlər dayanır; açıq mövqelərin SL/TP, müddət və JEV çıxışları davam edir. Bu, bütün mövqeləri bağlayan emergency düymə deyil.
-- **Disk xətası:** jurnala yazılmayan analiz icraya buraxılmır.
-- **Bağlantı xətası:** təzə Freqtrade telemetry yoxdursa giriş siqnalları bağlanır. Panel köhnə balansı cari məlumat kimi göstərmir.
+1. Dashboard-da yeni girişləri dayandırın. Açıq paper mövqeləri yoxlayın və qısa restart pəncərəsi seçin.
+2. Prosesləri dayandırın; `.env`, `user_data/config.paper.json` və bütün `data/` qovluğunu backup edin.
+   SQLite backup-ı proseslər dayanandan sonra edin; işlək DB faylını tək kopyalamaq düzgün snapshot deyil.
+3. `git pull --ff-only` edin. Python 3.12+ environment-də `pip install -e '.[paper,test]'` işlədin.
+4. Repo kökündə `python -m app.paper --upgrade` işlədin. Mövcud wallet DB, credential, symbols, DB URL
+   və açıq mövqelər saxlanılır. Config backup avtomatik yaradılır; risk policy, loop/pairlist intervalı yenilənir.
+5. Hər iki prosesi eyni versiya ilə başladın. v2/v3 qarışığı yeni girişləri bloklayır.
+6. UI-də heartbeat, equity, bridge sağlamlığını yoxlayın. Sonra girişləri davam etdirin.
 
-Stop və target ilkin entry tag-də saxlanılır, restartda bərpa olunur.
-SL/TP bot səviyyəsindədir: Freqtrade prosesi dayansa simulyasiya da dayanır. Exchange üzərində real qoruma iddiası yoxdur.
-Eyni hesabı başqa order icraçısı ilə paylaşmaq bu versiyanın əhatəsində deyil.
+Mövcud `.env` **əvəz edilmir**. `SCAN_SECONDS=60` kimi əvvəlki explicit ayarlar qalır; bu indi radarın
+fasiləsidir. Yeni ayarlar yoxdursa balanced default-ları tətbiq edilir. Mövcud `SIGNAL_TTL_SECONDS=120`
+profilin TTL default-undan üstün tutulur; profillə dəyişməsini istəyirsinizsə bu sətri silin və ya boş qoyun.
+Köhnə TTL çox aşağıdırsa, `PRIORITY_SCAN_SECONDS + SYMBOL_TIMEOUT_SECONDS < SIGNAL_TTL_SECONDS`
+şərtini təmin edin (default 15 + 35 < 120). Risk `.env` ayarını dəyişəndə yenidən `--upgrade` edin; policy hash mismatch girişləri bloklayacaq.
+`analysis.db`-yə yalnız əlavə cache cədvəli/index yaradılır. Köhnə analiz JSON-ları oxuna bilir.
+Freqtrade DB schema-sına toxunulmur; 4 və 5 hissəli köhnə `enter_tag` SL/TP planları qəbul edilir.
+Əvvəlki daha sıx stop framework initialization-dan sonra bir dəfə bərpa edilir və DB-də saxlanır.
+**DB silmək, balansı sıfırlamaq və ya açıq mövqeləri bağlamaq tələb olunmur.**
 
-## Panel və PnL
+## Serverdə 7/24 işlətmək
 
-- Wallet, sərbəst vəsait və istifadə olunan margin ayrı göstərilir.
-- Reallaşmış və ümumi PnL Freqtrade API-dən oxunur; tətbiq ayrıca uyğunsuz balans hesablamır.
-- Açıq mövqelərdə istiqamət, giriş/cari qiymət, margin, PnL, SL/TP və funding göstərilir.
-- JEV panelində təklif edilən leverage, mövqe sətrində faktiki tətbiq olunan leverage görünür. Risk büdcəsi sabit olduğundan yüksək leverage margin-i azalda bilər; qazancın eyni dəfə artacağı vədi yoxdur.
-- Son 30 trade içindən bağlı əməliyyatlar göstərilir; bütün tarixçə Freqtrade SQLite bazasındadır.
-- 0.05% hər tərəf üçün komissiya konfiqurasiya olunub. Funding Freqtrade-in əldə etdiyi məlumat qədər hesablanır; onu ikinci dəfə PnL-dən çıxmırıq.
-- Dry-run real fill, order-book queue, likvidlik, slippage və faktiki hesab funding-i ilə tam ekvivalent deyil.
-- Risk R:R hesabında hər tərəfə 3 bps slippage fərziyyəsi var; bu, Freqtrade PnL-nə ayrıca məcburi yazılmış xərc deyil.
-
-## Konfiqurasiya
-
-| Parametr | Standart / məna |
-|---|---|
-| `TYPESAFE_API_KEY` | Boşdursa JEV çağırılmır və giriş yoxdur |
-| `TYPESAFE_MODEL` | `jev-latest`; faktiki model analiz tarixçəsində saxlanır |
-| `SYMBOLS` | `ALL`: bütün aktiv Binance USDT perpetual bazarları |
-| `SCAN_SECONDS` | Yeni `.env.example` üçün 60; skan bitəndən sonrakı gözləmə |
-| `MIN_AI_CONFIDENCE` | 0.90; gəlirlilik ehtimalı deyil |
-| `MAX_SPREAD_BPS` | Analizdə 15; executor ayrıca maksimum 15 yoxlayır |
-| `MAX_FUNDING_RATE` | Ödəniş istiqamətində 0.0003; funding R:R hesabına daxil deyil |
-| `SIGNAL_TTL_SECONDS` | 120; icra siqnalının maksimum yaşı |
-| `BRIDGE_TOKEN` | Setup yaradır; minimum 32 simvol; frontend-ə ötürülmür |
-| `FREQTRADE_URL` | `http://127.0.0.1:8083`; yalnız lokal HTTP |
-| `FREQTRADE_USER/PASSWORD` | Setup yaradır; dashboard yalnız GET endpoint-ləri oxuyur |
-| `DASHBOARD_USER/PASSWORD` | İkisi birlikdə; uzaq giriş üçün HTTPS autentifikasiyası da tələb olunur |
-| `DEMO_MODE` | `true`: sintetik vizual demo, AI/order yoxdur |
-| `DATA_DIR` | Analiz və pause SQLite bazası, standart `data` |
-
-`Settings`-in env verilməyən fallback scan intervalı geriyə uyğunluq üçün 300 saniyədir.
-Confidence standartı 0.90-dır. Mövcud `.env` və ya proses mühitində `MIN_AI_CONFIDENCE=0.85` varsa, onu `0.90` edin və dashboard-u restart edin; `git pull` lokal `.env` faylını dəyişmir. Açıq şəkildə verilmiş konfiqurasiya standart dəyərdən üstündür. Eyni parametr giriş filtri, JEV leverage tavanının tətbiqi və JEV `CLOSE` qərarı üçün istifadə olunur; SL/TP çıxışları confidence-dən asılı deyil.
-
-Mövcud `.env` intervalı avtomatik dəyişdirilmir; daha tez analiz üçün `SCAN_SECONDS=60` seçə bilərsiniz.
-SYMBOLS=ALL bütün aktiv USDT perpetual bazarlarını hər skanda Binance-dən avtomatik tapır; coin sayı limiti yoxdur. Çox simvol/uzun AI cavabı bəzi siqnalları vaxtdan sala bilər; təhlükəsizlik üçün TTL-i kor-koranə artırmayın.
-JEV eyni semantik vəziyyət + şam + mövqe konteksti üçün cache edilir; maksimum 200 qeyd, restartda təmizlənir.
-
-## Saxlama və təhlükəsizlik
-
-- `data/analysis.db`: son 2,000 analiz və davamlı giriş pause vəziyyəti. `demo.db` ayrıdır.
-- `data/freqtrade-paper.sqlite`: Freqtrade wallet/trade tarixçəsi. Virtual nəticələri saxlamaq üçün silməyin.
-- `.env`, `user_data/config.paper.json`, bazalar və loglar Git-ə daxil edilmir.
-- 8082 və 8083 yalnız loopback-də dinləyir. Portları birbaşa internetə açmayın.
-- Token yalnız `/api/execution/signals` üçün keçərlidir, dashboard idarəetmə hüququ vermir.
-- Bir dashboard worker və bir Freqtrade prosesi işlədin. `--reload` istifadə etməyin.
-- Backup üçün prosesləri dayandırıb `data` və lokal config-i təhlükəsiz saxlayın.
-- Mövcud systemd nümunəsi yalnız dashboard üçündür; avtomatik server deploy-u edilmir.
-
-## API
-
-| Endpoint | Məqsəd |
-|---|---|
-| `GET /api/status` | Radar + sanitizasiya edilmiş Freqtrade telemetry |
-| `GET /api/history` | Son 100 analiz |
-| `GET /api/execution/signals` | Bearer bridge token ilə TTL-li icra siqnalları |
-| `POST /api/execution/pause`, `/resume` | Yeni girişləri dayandır/davam etdir |
-| `POST /api/scan` | Əlavə skan; minimum 60 saniyə interval |
-| `GET /health` | Prosesin işləməsi; upstream sağlamlıq zəmanəti deyil |
-
-POST üçün `X-Crypto-Jev: 1` tələb olunur. Cross-site browser POST bloklanır.
-
-## Test və məhdudiyyətlər
+`deploy/crypto-jev.service` və `deploy/crypto-jev-paper.service` iki prosesi ayrıca supervise edir.
+Nümunələr `/opt/crypto-jev`, `cryptojev` istifadəçisi və hazır `.venv` fərz edir. Kod owner-i root,
+runtime DB qovluqları service istifadəçisi tərəfindən yazıla bilən olmalıdır. Credential faylları həmin
+istifadəçiyə oxuma üçün verin. Daha sərt ayrılıq üçün ayrıca OS istifadəçiləri və ayrı writable qovluqlar seçin.
+Paper service `.env`-i yükləmir və TypeSafe açarına environment vasitəsilə giriş almır.
 
 ```bash
-.venv/bin/python -m pip install -e '.[paper,test]'
+sudo cp deploy/crypto-jev.service deploy/crypto-jev-paper.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now crypto-jev.service crypto-jev-paper.service
+sudo journalctl -u crypto-jev -u crypto-jev-paper -f
+```
+
+`Restart=always`, 3 saniyə restart fasiləsi, private tmp və filesystem/kernel hardening daxildir.
+Dashboard restartı Freqtrade-i avtomatik dayandırmır: mövcud qoruma davam etməlidir.
+
+**SL/TP proses səviyyəsindədir. Freqtrade dayanarsa virtual mövqelərin stop/target yoxlanması dayanır.**
+Exchange-native stop yoxdur. Engine heartbeat entry-ləri bloklaya və problem göstərə bilər, amma ölmüş
+executor-un SL/TP-sini icra edə bilməz. systemd process crash-i bərpa edir; donmuş prosesi yalnız
+`Restart=always` aşkar etmir. Host/network dayanması ayrıca riskdir.
+
+İstəyə bağlı monitor:
+
+```bash
+.venv/bin/python -m app.monitor
+sudo cp deploy/crypto-jev-monitor.service deploy/crypto-jev-monitor.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now crypto-jev-monitor.timer
+```
+
+Checker 200/503 heartbeat statusundan çıxış kodu yaradır; token-i log-a çıxarmır. Timer hər 30 saniyə
+local check edir. Bu nümunə bildiriş göndərmir və özbaşına trade/restart etmir. İstifadə etdiyiniz monitoring
+sisteminə service failure alert qoşun; host-un itməsi üçün ayrı host-dan yoxlama lazımdır. Portları public açmayın.
+
+## Konfiqurasiya və yoxlamalar
+
+Bütün əsas ayarlar və default-lar `.env.example`-dadır. `PERFORMANCE_PROFILE`, priority worker/interval/size,
+radar interval/parallelism, per-symbol deadline, signal/cache TTL, confidence-lər, bridge polling, spread,
+funding, fee/slippage ehtiyatı, margin/risk/leverage/daily loss və cooldown override edilə bilər.
+Yanlış, qeyri-sonlu və təhlükəsizlik tavanını aşan dəyərlər startup-da rədd edilir.
+
+```bash
 .venv/bin/python -m pytest -q
 node --check app/static/app.js
 ```
 
-Testlər real Freqtrade 2026.8 strategy resolver/config schema ilə işləyir; exchange/AI cavabları testdə mock edilir.
-UI testi üçün `playwright` və Microsoft Edge tələb olunur. Lokal dashboard işləyərkən
-`node tests/terminal-ui.cjs` işlədin. Test canlı məlumatı oxuyur; order yaratmır.
+178 backend test keçib; testlər real Freqtrade 2026.8 resolver/config/DB API ilə işləyir; exchange və AI cavabları mock-dur.
+`tests/operations-ui.cjs` şəbəkəsiz dashboard smoke testidir. Playwright və Chromium tələb edir.
+Bu mühitdə Chromium yüklənmədiyi üçün vizual browser yoxlaması tamamlanmayıb; JS sintaksis yoxlaması keçib.
+`tests/terminal-ui.cjs` ayrıca canlı bazar UI yoxlamasıdır; real order yaratmır.
 
-**Canlı JEV və Binance ilə uzunmüddətli paper sınağı bu dəyişiklik zamanı edilməyib.**
-Real API açarı olmadan gəlirlilik, siqnal keyfiyyəti və faktiki fill davranışı sübut edilə bilməz.
+News, order-book depth və on-chain JEV girişləri unavailable olaraq qalır. Dashboard order book yalnız
+operator görünüşüdür. JEV confidence gəlirlilik ehtimalı deyil. Backtest/hyperopt, live order və real
+exchange credential dəstəyi əlavə edilməyib. Canlı paper soak testi istifadəçinin öz TypeSafe açarı ilə aparılmalıdır.
 
-**Tarixi JEV backtest-i qəsdən bloklanıb.** Bugünkü AI siqnalını keçmiş şamlara tətbiq etmək lookahead bias yaradar.
-Etibarlı backtest üçün vaxt möhürlü tarixi snapshot/AI cavab dataset-i və ayrıca replay strategiyası lazımdır; bu versiyaya daxil deyil.
-JEV-li və JEV-siz strategiyaların müqayisəsi də hələ nəticəsi olan performans hesabatı deyil.
-Bu versiya yoxlanılan inteqrasiya bazasıdır, “zəmanətli qazanc sistemi” deyil.
+## English engineering notes
 
-## Rəsmi mənbələr
+See [refactor analysis and change map](docs/refactor-2026-10-05.md) for the baseline findings,
+file-by-file changes, safety decisions, validation evidence and remaining limits. The two-process model,
+JEV-only direction, paper-only mode and persisted trade plans are preserved. Protocol v3 deliberately
+rejects old executors; upgrade both processes together. No database reset or position reset is required.
 
-- [Freqtrade strategy callbacks](https://www.freqtrade.io/en/stable/strategy-callbacks/)
-- [Freqtrade REST API](https://www.freqtrade.io/en/stable/rest-api/)
-- [Freqtrade leverage](https://www.freqtrade.io/en/stable/leverage/)
-- [TypeSafe System One API](https://docs.typesafe.ai/api)
-- [Jev confidence](https://docs.typesafe.ai/confidence)
-
-## Yenilənmiş terminal və icra axını
-
-Bütün aktiv USDT perpetual bazarları analiz edilir. Freqtrade `RemotePairList` ilə yalnız təzə giriş siqnalı olan bazarları və açıq mövqeləri alır; bu, yüzlərlə bazarın şam yükləməsinin order dövrəsini ləngitməsinin qarşısını alır. Mövcud lokal konfiqurasiyada `pairlists` bölməsi də bu rejimə uyğun olmalıdır. Siqnalın 120 saniyəlik müddəti və risk yoxlamaları saxlanılır.
-
-Binance üslubunda terminalda canlı şam qrafiki (1m/15m/1h/4h), real order book, axtarış və siqnal filtrləri, JEV qərarı və ayrıca icra səbəbi, mövqelər və tarixçə var. Seçilmiş coinin canlı qiyməti onun son JEV analizindən ayrıca yenilənir. Bütün coinlərin JEV analizi eyni anda bitmir; köhnə analizlər giriş üçün istifadə olunmur.
-
-Brauzer yoxlaması: işləyən lokal dashboard və Playwright/Edge olduqda `node tests/terminal-ui.cjs`. Bu yoxlama canlı məlumatı yalnız oxuyur; order və pause/resume sorğusu göndərmir. Masaüstü/mobil şəkillər `data/terminal-desktop.png` və `data/terminal-mobile.png` daxilində saxlanılır.
+Primary references: [Freqtrade callbacks](https://www.freqtrade.io/en/stable/strategy-callbacks/),
+[REST API](https://www.freqtrade.io/en/stable/rest-api/), [leverage](https://www.freqtrade.io/en/stable/leverage/),
+[TypeSafe System One API](https://docs.typesafe.ai/api).

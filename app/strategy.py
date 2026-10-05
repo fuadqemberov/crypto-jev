@@ -1,56 +1,53 @@
-"""Heuristic research rules, not a calibrated win probability."""
+"""Non-directional vetoes; JEV alone supplies LONG/SHORT/WAIT."""
+from __future__ import annotations
+from typing import Any
+from .config import Settings
+from .risk import RiskPolicy, adverse_funding, net_rr, finite
 
-def technical(snapshot, settings, ai_direction=None):
+def technical(snapshot: dict[str, Any], settings: Settings, ai_direction: str | None = None) -> dict[str, Any]:
     frames = snapshot['frames']
     f = frames['15m']
     direction = ai_direction or 'WAIT'
     bullish = direction == 'LONG'
-    trend = 'bullish' if bullish else 'bearish'
     sign = 1 if bullish else -1
-    rules = []
-    def rule(label, points, passed):
-        rules.append(dict(label=label, maximum=points, points=points if passed else 0, passed=bool(passed)))
-    for tf in ('15m', '1h', '4h'):
-        rule(tf + ' EMA trend uyğunluğu', 15, direction != 'WAIT' and frames[tf]['trend'] == trend)
-    rule('15m MACD güclənməsi', 15, direction != 'WAIT' and f['macd_hist'] * sign > 0 and f['macd_change'] * sign > 0)
-    rule('1h MACD istiqaməti', 10, direction != 'WAIT' and frames['1h']['macd_hist'] * sign > 0)
-    rule('15m RSI momentum', 10, (50 <= f['rsi'] <= 70 if bullish else 30 <= f['rsi'] <= 50) and direction != 'WAIT')
-    rule('1h RSI momentum', 10, (50 <= frames['1h']['rsi'] <= 70 if bullish else 30 <= frames['1h']['rsi'] <= 50) and direction != 'WAIT')
-    rule('Nisbi həcm ≥ 1.2', 10, f['relative_volume'] >= 1.2)
     guards = []
-    def guard(label, passed):
-        guards.append(dict(label=label, passed=bool(passed)))
-    guard('ATR / qiymət 0.1–5%', .1 <= f['atr_pct'] <= 5)
-    guard('Cari qiymət siqnaldan ≤ 1 ATR', abs(snapshot['mark'] - f['close']) <= f['atr'])
-    guard('Spread limiti', snapshot['spread_bps'] <= settings.max_spread)
-    guard('Funding limiti (ödəniş istiqaməti)', abs(snapshot['funding_rate']) <= .001 and snapshot['funding_rate'] * sign <= settings.max_funding)
-    guard('RSI həddindən artıq deyil', 22 <= f['rsi'] <= 78)
-    score = sum(r['points'] for r in rules)
-    return dict(candidate=direction, score=score, rules=rules, guards=guards)
+    def guard(label: str, passed: bool, code: str) -> None:
+        guards.append(dict(label=label, passed=bool(passed), code=code))
+    guard('ATR / qiymət 0.1–5%', .1 <= f['atr_pct'] <= 5, 'volatility')
+    guard('Cari qiymət siqnaldan ≤ 1 ATR', abs(snapshot['mark'] - f['close']) <= f['atr'], 'price_gap')
+    guard('Spread limiti', snapshot['spread_bps'] <= settings.max_spread, 'spread')
+    guard('Funding limiti (ödəniş istiqaməti)', abs(snapshot['funding_rate']) <= .001 and snapshot['funding_rate'] * sign <= settings.max_funding, 'funding')
+    guard('RSI həddindən artıq deyil', 22 <= f['rsi'] <= 78, 'rsi')
+    return dict(candidate=direction, guards=guards)
 
 
-def decide(result, ai, settings):
+def decide(result: dict[str, Any], ai: dict[str, Any] | None, settings: Settings) -> tuple[str, list[str]]:
+    if result.get('candidate') not in ('LONG', 'SHORT', 'WAIT') or not isinstance(result.get('guards'), list):
+        return 'WAIT', ['Qərar yoxlaması etibarsızdır.']
     reasons = [g['label'] for g in result['guards'] if not g['passed']]
     if result['candidate'] == 'WAIT':
         reasons.append('Jev WAIT seçib və ya hələ qərar verməyib.')
     if ai is None:
         reasons.append('Jev təsdiqi yoxdur.')
     else:
-        a = ai['answers']
-        # This gate applies only to the four entry assessments. Leverage uses
-        # its own path in Execution.signals; low confidence removes the JEV cap.
+        a = ai.get('answers', {})
+        if not isinstance(a, dict) or any(not isinstance(a.get(k), dict) or not finite(a[k].get('confidence'))
+                or not 0 <= a[k]['confidence'] <= 1 for k in ('direction', 'momentum', 'regime', 'risk')):
+            return 'WAIT', reasons + ['Jev confidence məlumatı etibarsızdır.']
+        # Entry assessments and CLOSE/leverage have independent confidence thresholds.
         if any(a[k]['confidence'] < settings.min_confidence for k in ('direction', 'momentum', 'regime', 'risk')):
             reasons.append('Jev confidence həddindən aşağıdır.')
-        if a['direction']['choice'] != result['candidate']:
+        if a['direction'].get('choice') != result['candidate']:
             reasons.append('Jev qərarı ilə istifadə olunan istiqamət uyğun deyil.')
-        if a['momentum']['choice'] != ('bullish' if result['candidate'] == 'LONG' else 'bearish'):
+        if a['momentum'].get('choice') != ('bullish' if result['candidate'] == 'LONG' else 'bearish'):
             reasons.append('Jev momentum təsdiqi yoxdur.')
-        if a['regime']['choice'] == 'unclear' or a['risk']['choice'] != 'acceptable':
+        if a['regime'].get('choice') not in ('trend', 'range', 'transition') or a['risk'].get('choice') != 'acceptable':
             reasons.append('Jev rejim/risk filtri keçilmədi.')
     return ('WAIT' if reasons else result['candidate']), reasons
 
 
-def research_levels(snapshot, direction):
+def research_levels(snapshot: dict[str, Any], direction: str, policy: RiskPolicy | None = None) -> dict[str, Any] | None:
+    policy = policy or RiskPolicy()
     if direction == 'WAIT':
         return None
     sign = 1 if direction == 'LONG' else -1
@@ -59,9 +56,7 @@ def research_levels(snapshot, direction):
     stop, target = entry - sign * risk, entry + sign * 2 * risk
     if min(stop, target) <= 0 or risk <= 0:
         return None
-    # Indicative round-trip taker fee 0.05% per side + slippage 3bps per side.
-    cost_to_target = .0008 * (entry + target)
-    cost_to_stop = .0008 * (entry + stop)
+    funding = adverse_funding(snapshot['funding_rate'], direction, policy.funding_periods)
     return dict(entry=entry, stop=stop, target=target, gross_rr=2.,
-                net_rr=(2 * risk - cost_to_target) / (risk + cost_to_stop),
-                note='İndikativ plan; Freqtrade əlavə icra yoxlaması tətbiq edir. Funding R:R hesabına daxil deyil.')
+                net_rr=net_rr(entry, stop, target, funding, policy), funding_cost=funding,
+                note='Komissiya, slippage və mümkün mənfi funding ehtiyatı daxil edilib.')

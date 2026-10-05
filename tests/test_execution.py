@@ -21,13 +21,16 @@ from test_analysis import answer
 def row(action='LONG'):
     return dict(symbol='BTCUSDT', observed_at=int(time.time()*1000), decision=action,
                 frames={'15m': {'close_time': 12345}},
-                levels={'entry': 100, 'stop': 98, 'target': 104},
+                levels={'entry': 100, 'stop': 98, 'target': 104, 'funding_cost': 0.},
                 ai={'answers': {'leverage': {'choice': '5', 'confidence': .95}}}, error=None, ai_error=None)
 
 
 def connected(execution):
     execution.snapshot = dict(connected=True, dry_run=True, state='running',
                              observed_at=int(time.time()*1000), positions=[])
+    execution.receive_heartbeat(dict(version=3, mode='dry_run', risk_policy=execution.settings.risk.identity,
+        generated_at=int(time.time()*1000), risk_ready=True, daily_loss_hit=False, equity=2000.,
+        realized_today=0., unrealized=0., cooldowns={}, rejections={}, bridge_lag_ms=0.))
 
 
 def test_bridge_auth_pause_and_restart(tmp_path):
@@ -91,7 +94,7 @@ def test_executor_pairs_only_fresh_entries_and_open_positions(tmp_path):
     waiting = {**row('WAIT'), 'symbol': 'BNBUSDT'}
     payload = execution.signals([row(), stale, waiting])
     assert payload['pairs'] == ['BTC/USDT:USDT', 'ETH/USDT:USDT']
-    assert payload['refresh_period'] == 5
+    assert payload['refresh_period'] == 1
     store.set_paused(True)
     assert execution.signals([row()])['pairs'] == ['ETH/USDT:USDT']
     store.close()
@@ -214,17 +217,17 @@ def test_upgrade_preserves_local_credentials_symbols_and_database(tmp_path):
     with pytest.raises(ValueError): upgrade(tmp_path)
 
 
-def test_missing_leverage_blocks_entry_but_not_exit_and_uncertain_is_uncapped(tmp_path):
+def test_missing_leverage_blocks_entry_but_not_exit_and_uncertain_is_blocked(tmp_path):
     store=Store(tmp_path/'lev.db');execution=Execution(Settings(),None,store);connected(execution)
     value=row();value['position_id']=42
     value['ai']['answers']={'position_action':{'choice':'CLOSE','confidence':.99}}
-    output=execution.signals([value]);assert output['version']==2
+    output=execution.signals([value]);assert output['version']==3
     assert output['signals'][0]['action']=='WAIT' and output['signals'][0]['close_trade_id']==42
     value['ai']['answers']['leverage']={'choice':'7','confidence':.99}
     assert execution.signals([value])['signals'][0]['action']=='WAIT'
     value['ai']['answers']['leverage']={'choice':'3','confidence':.5}
     output=execution.signals([value])['signals'][0]
-    assert output['action']=='LONG' and output['leverage_requested']==100
+    assert output['action']=='WAIT' and 'leverage_requested' not in output
     value['ai']['answers']['leverage']['confidence']=.99
     assert execution.signals([value])['signals'][0]['leverage_requested']==3
     store.close()

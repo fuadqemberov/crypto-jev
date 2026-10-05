@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Any
 import asyncio
 import math
 import time
@@ -10,7 +12,7 @@ class MarketError(Exception):
 
 
 class Market:
-    def __init__(self, client):
+    def __init__(self, client: httpx.AsyncClient) -> None:
         self.client = client
         self.next_request = 0.
         self.cooldown_until = 0.
@@ -21,7 +23,7 @@ class Market:
         self.quotes = None
         self.quotes_lock = asyncio.Lock()
 
-    async def get(self, path, **params):
+    async def get(self, path: str, **params: Any) -> Any:
         # The lock only spaces request starts; responses are awaited outside it so
         # network latency no longer serializes the whole scan.
         async with self.lock:
@@ -29,6 +31,8 @@ class Market:
             if now < self.cooldown_until:
                 raise MarketError('Binance sorğu limiti: növbəti skanı gözləyin.')
             await asyncio.sleep(max(0, self.next_request - now))
+            if time.monotonic() < self.cooldown_until:
+                raise MarketError('Binance cooldown')
             self.next_request = time.monotonic() + .1
         try:
             r = await self.client.get('https://fapi.binance.com' + path, params=params)
@@ -52,7 +56,7 @@ class Market:
         except (httpx.HTTPError, ValueError) as e:
             raise MarketError('Binance məlumatını almaq mümkün olmadı.') from e
 
-    async def discover_symbols(self):
+    async def discover_symbols(self) -> tuple[str, ...]:
         data = await self.get('/fapi/v1/exchangeInfo')
         symbols = sorted({item['symbol'] for item in data['symbols']
                           if item.get('status') == 'TRADING'
@@ -65,7 +69,19 @@ class Market:
             raise MarketError('Aktiv USDT perpetual bazarları tapılmadı.')
         return tuple(symbols)
 
-    async def _quotes(self):
+    def prune(self, symbols: tuple[str, ...]) -> None:
+        allowed = set(symbols)
+        self.klines = {k: v for k, v in self.klines.items() if k[0] in allowed}
+
+    async def volume_ranking(self, symbols: tuple[str, ...]) -> tuple[str, ...]:
+        data = await self.get('/fapi/v1/ticker/24hr')
+        allowed = set(symbols)
+        volumes = [(item['symbol'], float(item['quoteVolume'])) for item in data if item.get('symbol') in allowed]
+        if any(not math.isfinite(v) or v < 0 for _, v in volumes):
+            raise MarketError('Invalid volume')
+        return tuple(s for s, _ in sorted(volumes, key=lambda item: item[1], reverse=True))
+
+    async def _quotes(self) -> tuple[float, int, dict[str, Any], dict[str, Any]]:
         # Three bulk requests replace three per-symbol requests; refreshed every 2 s.
         async with self.quotes_lock:
             if self.quotes is None or time.monotonic() - self.quotes[0] > 2:
@@ -76,7 +92,7 @@ class Market:
                                {q['symbol']: q for q in books}, {p['symbol']: p for p in premiums})
             return self.quotes
 
-    async def _frame(self, symbol, interval, now):
+    async def _frame(self, symbol: str, interval: str, now: int) -> tuple[int, dict[str, Any], list[dict[str, Any]] | None]:
         # Indicators use closed bars only, so they are recomputed only after the
         # still-open candle closes. Caching features (not raw bars) keeps memory small.
         cached = self.klines.get((symbol, interval))
@@ -90,7 +106,7 @@ class Market:
             raise MarketError('Bazar məlumatı köhnədir.')
         return cached
 
-    async def snapshot(self, symbol):
+    async def snapshot(self, symbol: str) -> dict[str, Any]:
         _, offset, books, premiums = await self._quotes()
         if symbol not in books or symbol not in premiums:
             raise MarketError('Bid/ask və ya mark qiyməti yoxdur.')
@@ -107,7 +123,7 @@ class Market:
                     frames={k: dict(v[1]) for k, v in frames.items()}, candles=frames['15m'][2])
 
 
-def demo_snapshot(symbol):
+def demo_snapshot(symbol: str) -> dict[str, Any]:
     # Stable synthetic sample, explicitly labelled and never sent to Jev.
     now = int(time.time() * 1000)
     raw = {}

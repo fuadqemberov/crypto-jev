@@ -1,3 +1,7 @@
+from __future__ import annotations
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any
+from starlette.responses import Response
 import asyncio
 import secrets
 import time
@@ -14,11 +18,11 @@ from .store import Store
 STATIC = Path(__file__).parent / 'static'
 
 
-def create_app(settings=None, start_worker=True):
+def create_app(settings: Settings | None = None, start_worker: bool = True) -> FastAPI:
     settings = settings or Settings.load()
 
     @asynccontextmanager
-    async def lifespan(app):
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store = Store(settings.data_dir / ('demo.db' if settings.demo else 'analysis.db'))
         async with httpx.AsyncClient(timeout=httpx.Timeout(20), follow_redirects=False) as client:
             app.state.engine = Engine(settings, client, store)
@@ -41,8 +45,8 @@ def create_app(settings=None, start_worker=True):
     basic = HTTPBasic(auto_error=False)
 
     @app.middleware('http')
-    async def protect(request: Request, call_next):
-        bridge_request = request.url.path == '/api/execution/signals'
+    async def protect(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+        bridge_request = request.url.path in ('/api/execution/signals', '/api/execution/heartbeat', '/api/execution/health')
         if bridge_request:
             expected = 'Bearer ' + settings.bridge_token
             if not settings.bridge_token or not secrets.compare_digest(request.headers.get('Authorization', '').encode(), expected.encode()):
@@ -55,7 +59,7 @@ def create_app(settings=None, start_worker=True):
             if not credentials or not (secrets.compare_digest(credentials.username.encode(), settings.user.encode()) &
                                         secrets.compare_digest(credentials.password.encode(), settings.password.encode())):
                 return JSONResponse({'detail': 'Giriş tələb olunur.'}, status_code=401, headers={'WWW-Authenticate': 'Basic'})
-        if request.method == 'POST':
+        if request.method == 'POST' and not bridge_request:
             # Browser cross-site form submissions cannot supply this custom header.
             if request.headers.get('X-Crypto-Jev') != '1' or request.headers.get('Sec-Fetch-Site') == 'cross-site':
                 return JSONResponse({'detail': 'Sorğu mənbəyi qəbul edilmədi.'}, status_code=403)
@@ -66,29 +70,29 @@ def create_app(settings=None, start_worker=True):
         return response
 
     @app.get('/')
-    async def index():
+    async def index() -> FileResponse:
         return FileResponse(STATIC / 'index.html')
 
     @app.get('/static/{filename}')
-    async def static(filename: str):
+    async def static(filename: str) -> FileResponse:
         if filename not in ('app.js', 'style.css'):
             raise HTTPException(404)
         return FileResponse(STATIC / filename)
 
     @app.get('/health')
-    async def health():
+    async def health() -> dict[str, str]:
         return {'status': 'ok'}
 
     @app.get('/api/status')
-    async def status():
+    async def status() -> dict[str, Any]:
         return app.state.engine.status()
 
     @app.get('/api/history')
-    async def history():
+    async def history() -> list[dict[str, Any]]:
         return app.state.engine.store.history()
 
     @app.get('/api/market/{symbol}')
-    async def market_view(symbol: str, interval: str = '15m'):
+    async def market_view(symbol: str, interval: str = '15m') -> dict[str, Any]:
         engine = app.state.engine
         if symbol not in engine.symbols or interval not in ('1m', '15m', '1h', '4h'):
             raise HTTPException(404, 'Bazar və ya period tapılmadı.')
@@ -116,19 +120,43 @@ def create_app(settings=None, start_worker=True):
             raise HTTPException(503, 'Canlı bazar məlumatı alınmadı.') from None
 
     @app.get('/api/execution/signals')
-    async def signals():
+    async def signals() -> dict[str, Any]:
         engine = app.state.engine
-        return engine.execution.signals(engine.rows.values(), engine.storage_error)
+        await engine.refresh_marks()
+        engine.execution.last_pull = int(time.time()*1000)
+        return engine.signals()
+
+    @app.post('/api/execution/heartbeat')
+    async def heartbeat(request: Request) -> dict[str, bool]:
+        # Bound streamed body before JSON parsing; content-length is untrusted.
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > 256_000:
+                raise HTTPException(413)
+        try:
+            import json
+            app.state.engine.execution.receive_heartbeat(json.loads(body))
+        except (ValueError, TypeError, KeyError):
+            raise HTTPException(422, 'Heartbeat yoxlamadan keçmədi.') from None
+        return {'accepted': True}
+
+    @app.get('/api/execution/health')
+    async def bridge_health() -> JSONResponse:
+        engine = app.state.engine
+        result = engine.signals()['diagnostics']
+        healthy = result['health'] == 'healthy' and not any(code in result['blocks'] for code in ('storage_error', 'discovery', 'worker_error'))
+        return JSONResponse(result, status_code=200 if healthy else 503)
 
     @app.post('/api/execution/{action}')
-    async def control(action: str):
+    async def control(action: str) -> dict[str, bool]:
         if action not in ('pause', 'resume'):
             raise HTTPException(404)
         app.state.engine.store.set_paused(action == 'pause')
         return {'paused': action == 'pause'}
 
     @app.post('/api/scan', status_code=202)
-    async def scan():
+    async def scan() -> dict[str, str]:
         task = app.state.manual_task
         if app.state.engine.scanning or (task and not task.done()):
             raise HTTPException(409, 'Skan artıq davam edir.')

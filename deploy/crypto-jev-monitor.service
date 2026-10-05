@@ -1,0 +1,13 @@
+[Unit]
+Description=Check JEV engine and paper executor heartbeat
+After=crypto-jev.service crypto-jev-paper.service
+
+[Service]
+Type=oneshot
+User=cryptojev
+WorkingDirectory=/opt/crypto-jev
+ExecStart=/opt/crypto-jev/.venv/bin/python -m app.monitor
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true

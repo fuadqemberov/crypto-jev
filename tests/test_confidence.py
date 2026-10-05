@@ -27,8 +27,8 @@ def test_each_entry_assessment_requires_ninety_percent(direction, field, confide
     assert decide(result, ai, Settings())[0] == (direction if allowed else 'WAIT')
 
 
-@pytest.mark.parametrize('confidence,close_allowed,requested', [(.85, False, 100), (.8999, False, 100), (.90, True, 3)])
-def test_shared_threshold_for_jev_exit_and_leverage_cap(tmp_path, confidence, close_allowed, requested):
+@pytest.mark.parametrize('confidence,close_allowed,requested', [(.8499, False, None), (.85, True, None), (.8999, True, None), (.90, True, 3)])
+def test_separate_exit_and_leverage_thresholds(tmp_path, confidence, close_allowed, requested):
     store = Store(tmp_path / 'confidence.db')
     try:
         execution = Execution(Settings(), None, store)
@@ -40,7 +40,7 @@ def test_shared_threshold_for_jev_exit_and_leverage_cap(tmp_path, confidence, cl
             'position_action': {'choice': 'CLOSE', 'confidence': confidence},
         }
         signal = execution.signals([value])['signals'][0]
-        assert signal['leverage_requested'] == requested
+        assert signal.get('leverage_requested') == requested
         assert ('close_trade_id' in signal) == close_allowed
         store.set_paused(True)
         signal = execution.signals([value])['signals'][0]

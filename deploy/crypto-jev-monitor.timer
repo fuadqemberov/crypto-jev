@@ -1,0 +1,11 @@
+[Unit]
+Description=Check JEV paper heartbeat every 30 seconds
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=30
+AccuracySec=1
+Unit=crypto-jev-monitor.service
+
+[Install]
+WantedBy=timers.target
