@@ -217,17 +217,22 @@ def test_upgrade_preserves_local_credentials_symbols_and_database(tmp_path):
     with pytest.raises(ValueError): upgrade(tmp_path)
 
 
-def test_missing_leverage_blocks_entry_but_not_exit_and_uncertain_is_blocked(tmp_path):
+def test_sizing_needs_no_ai_leverage_and_invalid_plan_does_not_block_exit(tmp_path):
     store=Store(tmp_path/'lev.db');execution=Execution(Settings(),None,store);connected(execution)
     value=row();value['position_id']=42
     value['ai']['answers']={'position_action':{'choice':'CLOSE','confidence':.99}}
     output=execution.signals([value]);assert output['version']==3
-    assert output['signals'][0]['action']=='WAIT' and output['signals'][0]['close_trade_id']==42
-    value['ai']['answers']['leverage']={'choice':'7','confidence':.99}
-    assert execution.signals([value])['signals'][0]['action']=='WAIT'
-    value['ai']['answers']['leverage']={'choice':'3','confidence':.5}
-    output=execution.signals([value])['signals'][0]
-    assert output['action']=='WAIT' and 'leverage_requested' not in output
-    value['ai']['answers']['leverage']['confidence']=.99
-    assert execution.signals([value])['signals'][0]['leverage_requested']==3
+    signal=output['signals'][0]
+    assert signal['action']=='LONG' and signal['close_trade_id']==42
+    assert signal['leverage_requested']==4
+    value['ai']['answers']['leverage']={'choice':'100','confidence':.01}
+    assert execution.signals([value])['signals'][0]['leverage_requested']==4
+    value['levels']={'entry':100, 'stop':102, 'target':104, 'funding_cost':0.}
+    signal=execution.signals([value])['signals'][0]
+    assert signal['action']=='WAIT' and signal['close_trade_id']==42
+    assert signal['entry_blocks']==['levels']
+    value['levels']=None
+    signal=execution.signals([value])['signals'][0]
+    assert signal['action']=='WAIT' and signal['close_trade_id']==42
+    assert signal['entry_blocks']==['levels']
     store.close()

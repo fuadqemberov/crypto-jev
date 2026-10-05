@@ -39,7 +39,7 @@ def signal_error(signal: Any, now: float) -> str | None:
     if 'close_trade_id' in signal and (type(signal['close_trade_id']) is not int or signal['close_trade_id'] <= 0):
         return 'position'
     if signal['action'] != 'WAIT':
-        if type(signal.get('leverage_requested')) is not int or signal['leverage_requested'] not in (1,2,3,5,10,15,20,25,50,75,100):
+        if type(signal.get('leverage_requested')) is not int or not 1 <= signal['leverage_requested'] <= 100:
             return 'leverage'
         levels = signal.get('levels')
         if not isinstance(levels, dict) or not all(finite(levels.get(k)) and levels[k] > 0 for k in ('entry','stop','target')):

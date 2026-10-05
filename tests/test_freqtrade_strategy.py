@@ -72,7 +72,9 @@ def test_bridge_to_entry_and_risk_sizing(strategy, tmp_path, monkeypatch):
     strategy._accept(payload, now.timestamp()*1000)
     data = strategy.populate_entry_trend(pd.DataFrame({'close':[100,100], 'volume':[1,1]}), {'pair':value['pair']})
     assert data.iloc[-1].enter_long == 1
+    assert payload['signals'][0]['leverage_requested'] == 4
     entry_tag = data.iloc[-1].enter_tag
+    assert strategy.leverage(value['pair'],now,100,1,20,entry_tag,'long') == 4
     monkeypatch.setattr(Trade, 'get_trades_proxy', lambda **kw: [])
     strategy.wallets = SimpleNamespace(get_total_stake_amount=lambda: 2000, get_available_stake_amount=lambda: 2000)
     assert strategy.custom_stake_amount(value['pair'],now,100,400,5,2000,1,entry_tag,'long') == 140

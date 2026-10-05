@@ -12,7 +12,12 @@ const assert = require('node:assert/strict');
    ai_configured:false,min_confidence:.9,model:'jev-latest',performance_profile:'balanced',priority_symbols:['BTCUSDT'],
    execution:{connected:false,paused:true,positions:[],trades:[]},
    metrics:{scan_seconds:{radar:120,priority:3},symbol_p50_ms:220,symbol_p95_ms:800},cache:{hit_rate:.75},
-   bridge:{health:'unavailable',blocks:['heartbeat'],rejections:{ttl:12,leverage_confidence:3},executor_rejections:{spread:2}}};
+   bridge:{health:'unavailable',blocks:['heartbeat'],rejections:{ttl:12,funding:3},executor_rejections:{spread:2}}};
+  state.rows=[
+   {symbol:'BTCUSDT',decision:'SHORT',jev_decision:'SHORT',observed_at:Date.now(),execution_ready:false,execution_action:'WAIT',execution_blocks:['pause']},
+   {symbol:'ETHUSDT',decision:'LONG',jev_decision:'LONG',observed_at:Date.now(),execution_ready:true,execution_action:'LONG',execution_blocks:[],planned_leverage:4}
+  ];
+  state.market_symbols=['BTCUSDT','ETHUSDT'];state.market_count=2;state.actionable_count=1;
   let offline=false;
   await page.route('**/*',async route=>{
    const url=new URL(route.request().url());
@@ -29,7 +34,16 @@ const assert = require('node:assert/strict');
   assert.match(await page.locator('#bridge-blocks').innerText(),/Heartbeat yoxdur/);
   assert.match(await page.locator('#rejection-metrics').innerText(),/12/);
   assert.equal(await page.locator('#score').count(),0);
-  mkdirSync('data',{recursive:true});
+  await page.locator('[data-filter="ready"]').click();
+  assert.equal(await page.locator('#markets button').count(),1);
+  assert.match(await page.locator('#markets').innerText(),/ETHUSDT/);
+  assert.equal(await page.locator('#signals').innerText(),'1');
+  await page.locator('[data-filter="direction"]').click();
+  assert.equal(await page.locator('#markets button').count(),2);
+  await page.locator('#markets button[aria-label="BTCUSDT"]').click();
+  assert.equal(await page.locator('#decision').innerText(),'WAIT');
+  assert.match(await page.locator('#decision-description').innerText(),/dayandırılıb/);
+  mkdirSync('data' ,{recursive:true});
   await page.screenshot({path:'data/operations-desktop.png',fullPage:true});
   await page.setViewportSize({width:390,height:844});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);

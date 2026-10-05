@@ -26,7 +26,6 @@ class Settings:
     ai_cache_ttl: int = 300
     ai_cache_persistent: bool = False
     close_confidence: float = .85
-    leverage_confidence: float = .90
     bridge_poll_seconds: int = 1
     risk: RiskPolicy = field(default_factory=RiskPolicy)
     min_confidence: float = .90
@@ -58,9 +57,8 @@ class Settings:
                 raise ValueError(f'Invalid setting: {name}')
         if self.priority_seconds + self.symbol_timeout >= self.signal_ttl:
             raise ValueError('Priority interval + analysis timeout must be below signal TTL')
-        for value in (self.close_confidence, self.leverage_confidence):
-            if not finite(value) or not 0 <= value <= 1:
-                raise ValueError('Invalid confidence threshold')
+        if not finite(self.close_confidence) or not 0 <= self.close_confidence <= 1:
+            raise ValueError('Invalid close confidence threshold')
 
         if self.symbols != ('ALL',) and (not self.symbols or any(not re.fullmatch(r'[A-Z0-9]+USDT', s) for s in self.symbols)):
             raise ValueError('SYMBOLS: ALL və ya USDT simvolları tələb olunur.')
@@ -95,7 +93,6 @@ class Settings:
                    ai_cache_size=int(os.getenv('AI_CACHE_SIZE', '3000')), ai_cache_ttl=int(os.getenv('AI_CACHE_TTL_SECONDS', '300')),
                    ai_cache_persistent=os.getenv('AI_CACHE_PERSISTENT', 'false').lower() == 'true',
                    close_confidence=float(os.getenv('MIN_CLOSE_CONFIDENCE', '.85')),
-                   leverage_confidence=float(os.getenv('MIN_LEVERAGE_CONFIDENCE', '.90')),
                    bridge_poll_seconds=int(os.getenv('BRIDGE_POLL_SECONDS', '1')),
                    risk=RiskPolicy(capital_risk=float(os.getenv('CAPITAL_RISK', '.005')),
                        margin_fraction=float(os.getenv('MAX_MARGIN_FRACTION', '.07')),

@@ -125,6 +125,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
     try:
         target = upgrade() if args.upgrade else initialize()
-        print(f'Hazır: {target} — yalnız virtual icra; JEV leverage, say limiti yoxdur. Açarlar göstərilmir.')
+        print(f'Hazır: {target} — yalnız virtual icra; risk əsasında leverage, say limiti yoxdur. Açarlar göstərilmir.')
     except FileExistsError as exc:
         print(exc)

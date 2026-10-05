@@ -11,8 +11,8 @@ import time
 import logging
 from collections import Counter
 from typing import Any
-from .bridge import VERSION, MAX_AGE_MS, PAIR
-from .risk import finite, daily_loss_hit
+from .bridge import VERSION, MAX_AGE_MS, PAIR, signal_error
+from .risk import finite, daily_loss_hit, loss_fraction, choose_leverage
 from .metrics import event
 
 log = logging.getLogger(__name__)
@@ -152,33 +152,58 @@ class Execution:
             symbol, decision = row['symbol'], row['decision']
             if decision == 'WAIT':
                 rejections.update(row.get('rejection_codes', ['decision_wait']))
+            entry_blocks = list(blocks) + (list(row.get('rejection_codes', ['decision_wait'])) if decision == 'WAIT' else [])
             levels = row.get('levels')
             identity = f"{symbol}:{decision}:{row['frames']['15m']['close_time']}"
             signal = dict(id=hashlib.sha256(identity.encode()).hexdigest()[:24], pair=pair_for(symbol),
                           observed_at=observed, expires_at=expires, action='WAIT', levels=None)
-            answer = row['ai']['answers'].get('leverage', {})
-            requested, confidence = answer.get('choice'), answer.get('confidence')
-            valid = (requested in {str(x) for x in (1,2,3,5,10,15,20,25,50,75,100)}
-                     and finite(confidence) and confidence >= self.settings.leverage_confidence)
             cooling = now < risk.get('cooldowns', {}).get(signal['pair'], 0)
             if cooling:
+                entry_blocks.append('cooldown')
                 rejections['cooldown'] += 1
-            if not valid:
-                rejections['leverage_confidence'] += 1
-            if enabled and not cooling and decision in ('LONG','SHORT') and levels and valid and all(
-                    finite(levels.get(k)) and levels[k] > 0 for k in ('entry','stop','target')):
-                funding = levels.get('funding_cost')
-                if finite(funding) and funding >= 0:
-                    signal.update(action=decision, leverage_requested=int(requested), funding_cost=funding,
-                                  levels={k: levels[k] for k in ('entry','stop','target')})
-                else:
+            if enabled and not cooling and decision in ('LONG', 'SHORT'):
+                if not isinstance(levels, dict) or not all(
+                        finite(levels.get(k)) and levels[k] > 0 for k in ('entry', 'stop', 'target')):
+                    entry_blocks.append('levels')
+                    rejections['levels'] += 1
+                elif not finite(levels.get('funding_cost')) or not 0 <= levels['funding_cost'] <= .12:
+                    entry_blocks.append('funding')
                     rejections['funding'] += 1
+                else:
+                    policy = self.settings.risk
+                    # Python sizes an already approved JEV direction; confidence is not a sizing input.
+                    try:
+                        loss = loss_fraction(levels['entry'], levels['stop'], levels['funding_cost'], policy)
+                        planned = choose_leverage(loss, policy.max_leverage, policy.max_leverage, policy)
+                    except (ValueError, OverflowError) as exc:
+                        event(log, logging.WARNING, 'entry_sizing', symbol=symbol, error=exc)
+                        planned = 0.
+                    if planned >= 1:
+                        signal.update(action=decision, leverage_requested=int(planned),
+                                      funding_cost=levels['funding_cost'],
+                                      levels={k: levels[k] for k in ('entry', 'stop', 'target')})
+                    else:
+                        entry_blocks.append('risk_error')
+                        rejections['risk_error'] += 1
             close = row['ai']['answers'].get('position_action', {})
             # Pause/daily entry guards never disable a fresh, position-bound JEV exit.
             if (status['connected'] and not storage_error and not external_blocks and status['storage_ok'] and not self.settings.demo
                     and close.get('choice') == 'CLOSE' and finite(close.get('confidence'))
                     and close['confidence'] >= self.settings.close_confidence and type(row.get('position_id')) is int):
                 signal.update(close_trade_id=row['position_id'])
+            error = signal_error(signal, now)
+            if error:
+                rejections[error] += 1
+                if error != 'levels':
+                    continue
+                # An invalid entry plan must not erase an independently valid JEV exit.
+                signal.update(action='WAIT', levels=None)
+                signal.pop('leverage_requested', None)
+                signal.pop('funding_cost', None)
+                entry_blocks.append(error)
+            if signal['action'] == 'WAIT' and not entry_blocks:
+                entry_blocks.append('levels')
+            signal['entry_blocks'] = sorted(set(entry_blocks))
             result.append(signal)
         pairs = {s['pair'] for s in result if s['action'] in ('LONG','SHORT')}
         pairs.update(t['pair'] for t in status.get('positions', []) if t.get('pair'))

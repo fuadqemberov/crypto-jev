@@ -105,8 +105,12 @@ büdcəsini aşırsa UI xəbərdarlıq göstərir. Heç bir gəlirlilik və ya s
 
 İstifadə olunmayan texniki score çıxarılıb. EMA/RSI/MACD/volume semantic context olaraq JEV-ə verilir;
 Python trendə əsasən LONG/SHORT yaratmır. Volatility, price gap, spread, funding, RSI və net R:R veto-ları qalır.
-Entry üçün direction/momentum/regime/risk confidence default 0.90-dır. CLOSE default 0.85,
-leverage default 0.90-dır. Qeyri-müəyyən leverage **yeni girişi bloklayır**; artıq 100× cap-a çevrilmir.
+Entry üçün direction/momentum/regime/risk confidence default 0.90-dır; CLOSE default 0.85-dir.
+JEV confidence kalibrasiya edilmiş gəlirlilik ehtimalı deyil. Leverage ayrıca JEV sualı deyil:
+Python yalnız təsdiqlənmiş istiqamətin ölçüsünü stop məsafəsi, komissiyalar və mənfi funding əsasında hesablayır.
+Bu, çoxvariantlı leverage cavabına əsassız 90% confidence qapısını aradan qaldırır.
+Ən kiçik uyğun tam leverage seçilir; exchange və margin-risk tavanına çatanda stake azaldılır.
+Uyğun risk planı yoxdursa giriş WAIT qalır. Freqtrade cari qiymət və exchange limitləri ilə hesabı yenidən yoxlayır.
 Pause və entry risk veto-ları təzə, açıq trade ID-sinə bağlı CLOSE qərarını dayandırmır.
 
 Ortaq risk hesabı, `e` giriş, `s` stop, `f` mənfi funding ehtiyatı üçün:
@@ -114,7 +118,7 @@ Ortaq risk hesabı, `e` giriş, `s` stop, `f` mənfi funding ehtiyatı üçün:
 ```text
 loss_fraction = abs(e-s)/e + cost_per_side*(1+s/e) + f
 leverage_target = ceil(capital_risk / (margin_fraction*loss_fraction))
-leverage = min(target, JEV_request, exchange_max, 20, floor(0.50/loss_fraction))
+leverage = min(max(1, target), planned_cap, exchange_max, 20, floor(0.50/loss_fraction))
 margin = min(equity*0.07, equity*0.005/(loss_fraction*leverage), available, executor_limits)
 ```
 
@@ -244,7 +248,7 @@ Yanlış, qeyri-sonlu və təhlükəsizlik tavanını aşan dəyərlər startup-
 node --check app/static/app.js
 ```
 
-178 backend test keçib; testlər real Freqtrade 2026.8 resolver/config/DB API ilə işləyir; exchange və AI cavabları mock-dur.
+188 backend test keçib; testlər real Freqtrade 2026.8 resolver/config/DB API ilə işləyir; exchange və AI cavabları mock-dur.
 `tests/operations-ui.cjs` şəbəkəsiz dashboard smoke testidir. Playwright və Chromium tələb edir.
 Bu mühitdə Chromium yüklənmədiyi üçün vizual browser yoxlaması tamamlanmayıb; JS sintaksis yoxlaması keçib.
 `tests/terminal-ui.cjs` ayrıca canlı bazar UI yoxlamasıdır; real order yaratmır.
@@ -263,3 +267,28 @@ rejects old executors; upgrade both processes together. No database reset or pos
 Primary references: [Freqtrade callbacks](https://www.freqtrade.io/en/stable/strategy-callbacks/),
 [REST API](https://www.freqtrade.io/en/stable/rest-api/), [leverage](https://www.freqtrade.io/en/stable/leverage/),
 [TypeSafe System One API](https://docs.typesafe.ai/api).
+
+## Leverage və hazır siqnal yeniləməsinə keçid
+
+`MIN_LEVERAGE_CONFIDENCE` artıq istifadə edilmir; köhnə `.env` sətri qalsa belə girişləri bloklamır.
+`MIN_AI_CONFIDENCE` və `MIN_CLOSE_CONFIDENCE` saxlanılır. Prompt versiyası dəyişdiyi üçün köhnə
+JEV cache cavabları təkrar istifadə edilmir; tarixçə və açıq paper mövqelər silinmir.
+Bridge v3 və `leverage_requested` sahəsi saxlanılır: sahə risk modulunun hesabladığı leverage cap-dır.
+Validator 1–100 tam ədədi qəbul edir (köhnə mesajlara uyğunluq); risk policy hər zaman maksimum 20× tətbiq edir.
+Hər iki prosesi yeniləyib restart edin; köhnə executor yeni tam leverage dəyərlərini rədd edə bilər.
+
+“LONG / SHORT” JEV istiqamətini göstərir. “Hazır siqnal” isə yalnız təzə, etibarlı planı olan,
+bridge giriş yoxlamalarını keçmiş siqnalları göstərir. Pause, TTL, telemetry, storage, funding və
+cooldown veto-ları ayrıca görünür. Freqtrade son qiymət, balans və exchange yoxlamasında yenə girişi rədd edə bilər.
+Bu filtr fill zəmanəti deyil. Səhv pair/plan producer-də rədd edilir və diaqnostikada sayılır.
+
+Mövcud serverdə service adları `crypto-jev-dashboard.service` və `crypto-jev-freqtrade.service` olduqda:
+
+```bash
+cd ~/crypto-jev
+git pull --ff-only
+sudo systemctl restart crypto-jev-dashboard.service
+sudo systemctl restart crypto-jev-freqtrade.service
+```
+
+Data qovluğunu və trade DB-ni silmək tələb olunmur.

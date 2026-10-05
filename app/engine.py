@@ -11,7 +11,7 @@ from .config import Settings
 from .jev import Jev, JevError, PROMPT_VERSION
 from .market import Market, demo_snapshot
 from .strategy import technical, decide, research_levels
-from .execution import Execution
+from .execution import Execution, pair_for
 from .metrics import Metrics, event
 from .store import Store
 from .risk import finite
@@ -260,13 +260,19 @@ class Engine:
 
     def status(self) -> dict[str, Any]:
         now = int(time.time()*1000)
+        bridge = self.signals()
+        signals = {signal['pair']: signal for signal in bridge['signals']}
         rows = []
         for row in self.rows.values():
             stale = not 0 <= now-row['observed_at'] < self.settings.signal_ttl*1000
-            rows.append({**row, 'stale': stale, 'decision': 'WAIT' if stale else row['decision'],
+            signal = signals.get(pair_for(row['symbol']))
+            execution_action = signal['action'] if signal else 'WAIT'
+            execution_blocks = (signal.get('entry_blocks', []) if signal else
+                                ['ttl' if stale else 'analysis_error' if row.get('error') or row.get('ai_error') else 'schema'])
+            rows.append({**row, 'planned_leverage': signal.get('leverage_requested') if signal else None, 'execution_ready': execution_action in ('LONG', 'SHORT'),
+                'execution_action': execution_action, 'execution_blocks': execution_blocks, 'stale': stale, 'decision': 'WAIT' if stale else row['decision'],
                 'jev_decision': row.get('ai', {}).get('answers', {}).get('direction', {}).get('choice') if row.get('ai') else None,
                 'analysis_age_seconds': max(0, (now-row['observed_at'])//1000), 'levels': None if stale else row.get('levels')})
-        bridge = self.signals()
         return dict(rows=rows, scanning=self.scanning, last_scan=self.last_scan, next_scan=self.next_scan,
             actionable_count=sum(signal['action'] in ('LONG', 'SHORT') for signal in bridge['signals']),
             market_count=len(self.symbols), market_symbols=self.symbols, scan_completed=self.scan_completed,
