@@ -187,7 +187,7 @@ class JevBridgeStrategy(IStrategy):
             price, timestamp = mark.get('price'), mark.get('observed_at')
             if not number(price) or price <= 0 or not number(timestamp) or not 0 <= now-timestamp <= MAX_AGE_MS:
                 raise ValueError('Position mark unavailable')
-            pnl = trade.calc_profit(rate=price).profit_abs
+            pnl = trade.calculate_profit(rate=price).profit_abs
             if not number(pnl):
                 raise ValueError('Position PnL unavailable')
             unrealized += pnl
@@ -333,7 +333,13 @@ class JevBridgeStrategy(IStrategy):
             if (ask-bid) / ((ask+bid)/2) * 10000 > self.policy.max_spread:
                 self.rejections['spread'] += 1
                 return False
-            allowed = net_rr(rate, levels['stop'], levels['target'], signal['funding_cost'], self.policy) >= self.policy.min_rr
+            rr = net_rr(rate, levels['stop'], levels['target'], signal['funding_cost'], self.policy)
+            allowed = rr >= self.policy.min_rr
+            if allowed:
+                event(log, logging.INFO, 'entry_approved', symbol=pair, signal_id=signal['id'],
+                      direction=signal['action'], rate=rate, stop=levels['stop'], target=levels['target'],
+                      net_rr=rr, planned_loss=amount*rate*loss, equity=equity,
+                      capital_risk=self.policy.capital_risk, funding_cost=signal['funding_cost'])
             self.rejections['accepted' if allowed else 'rr'] += 1
             return allowed
         except Exception as exc:
@@ -380,12 +386,20 @@ class JevBridgeStrategy(IStrategy):
     def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime, current_rate: float, current_profit: float,
                         after_fill: bool = False, **kwargs: Any) -> float | None:
         plan = trade_plan(trade)
-        if not plan or current_rate <= 0:
+        if not plan or not number(current_rate) or current_rate <= 0:
             return None
         previous = getattr(trade, 'stop_loss', None)
-        previous = previous if number(previous) and previous > 0 else plan[0]
-        stop = min(plan[0], previous) if trade.is_short else max(plan[0], previous)
-        return stoploss_from_absolute(stop, current_rate, is_short=trade.is_short, leverage=trade.leverage)
+        if number(previous) and previous > 0 and (
+                previous <= plan[0] if trade.is_short else previous >= plan[0]):
+            # Keep the persisted, exchange-rounded stop. Converting it back to a ratio on
+            # every tick can lose another price tick on each round-trip, especially SHORT.
+            # None tells Freqtrade to retain protection, including tighter pre-upgrade stops.
+            return None
+        distance = stoploss_from_absolute(plan[0], current_rate, is_short=trade.is_short, leverage=trade.leverage)
+        if distance > 0:
+            event(log, logging.INFO, 'protective_plan', symbol=pair, trade_id=trade.id,
+                  planned_stop=plan[0], target=plan[1], leverage=trade.leverage)
+        return distance
 
     def custom_exit(self, pair: str, trade: Trade, current_time: datetime, current_rate: float, current_profit: float, **kwargs: Any) -> str | None:
         plan = trade_plan(trade)

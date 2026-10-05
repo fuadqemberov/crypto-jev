@@ -44,27 +44,30 @@ PROMPT_VERSION = '5'
 
 
 class JevError(Exception):
-    pass
+    def __init__(self, message: str, code: str = 'upstream') -> None:
+        super().__init__(message)
+        self.code = code
+
 
 
 def parse_response(data: Any, questions: dict[str, Any] | None = None) -> dict[str, Any]:
     questions = questions or QUESTIONS
     if not isinstance(data, dict) or not isinstance(data.get('model'), str) or not data['model']:
-        raise JevError('Jev cavabında model yoxdur.')
+        raise JevError('Jev cavabında model yoxdur.', 'schema_model')
     answers = data.get('answers')
     if not isinstance(answers, dict):
-        raise JevError('Jev cavabı etibarsızdır.')
+        raise JevError('Jev cavabı etibarsızdır.', 'schema_answers')
     for name, question in questions.items():
         a = answers.get(name)
         if not isinstance(a, dict) or a.get('type') != 'choice' or a.get('choice') not in question['criteria']:
-            raise JevError('Jev qərar strukturu etibarsızdır.')
+            raise JevError('Jev qərar strukturu etibarsızdır.', 'schema_choice')
         p = a.get('probabilities')
         confidence = a.get('confidence')
         valid = lambda x: type(x) in (int, float) and math.isfinite(x) and 0 <= x <= 1
         if not valid(confidence) or not isinstance(p, dict) or set(p) != set(question['criteria']) or not all(valid(v) for v in p.values()):
-            raise JevError('Jev ehtimalları etibarsızdır.')
+            raise JevError('Jev ehtimalları etibarsızdır.', 'schema_probability')
         if abs(sum(p.values()) - 1) > .001 or p[a['choice']] < max(p.values()) - .000001:
-            raise JevError('Jev ehtimal bölgüsü uyğunsuzdur.')
+            raise JevError('Jev ehtimal bölgüsü uyğunsuzdur.', 'schema_distribution')
     # Whitelist fields so upstream text cannot leak into logs/UI or state.
     return dict(model=data['model'], answers={k: {field: answers[k][field] for field in ('type', 'choice', 'confidence', 'probabilities')} for k in questions})
 
@@ -75,7 +78,7 @@ class Jev:
 
     async def evaluate(self, state: dict[str, Any]) -> dict[str, Any]:
         if not self.settings.api_key:
-            raise JevError('TYPESAFE_API_KEY təyin edilməyib.')
+            raise JevError('TYPESAFE_API_KEY təyin edilməyib.', 'missing_key')
         questions = {**QUESTIONS, **POSITION_QUESTIONS} if state.get('position') else QUESTIONS
         for attempt in range(3):
             try:
@@ -89,14 +92,14 @@ class Jev:
                     except ValueError:
                         retry = 30
                     if not math.isfinite(retry) or retry > 30:
-                        raise JevError('Jev limiti: sorğu sonrakı skana saxlanıldı.')
+                        raise JevError('Jev limiti: sorğu sonrakı skana saxlanıldı.', 'retry_after')
                     await asyncio.sleep(max(2 ** (attempt + 1), retry))
                     continue
                 if r.status_code in (401, 403):
-                    raise JevError('Jev API açarı və ya giriş icazəsi etibarsızdır.')
+                    raise JevError('Jev API açarı və ya giriş icazəsi etibarsızdır.', f'http_{r.status_code}')
                 if r.is_error:
-                    raise JevError(f'Jev xidməti HTTP {r.status_code} qaytardı.')
+                    raise JevError(f'Jev xidməti HTTP {r.status_code} qaytardı.', f'http_{r.status_code}')
                 return parse_response(r.json(), questions)
             except (httpx.HTTPError, ValueError) as e:
-                raise JevError('Jev cavabı alınmadı; siqnal WAIT olaraq saxlanıldı.') from e
-        raise JevError('Jev sorğu limiti.')
+                raise JevError('Jev cavabı alınmadı; siqnal WAIT olaraq saxlanıldı.', 'transport') from e
+        raise JevError('Jev sorğu limiti.', 'retry_limit')

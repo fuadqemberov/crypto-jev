@@ -34,7 +34,7 @@ def decide(result: dict[str, Any], ai: dict[str, Any] | None, settings: Settings
         if not isinstance(a, dict) or any(not isinstance(a.get(k), dict) or not finite(a[k].get('confidence'))
                 or not 0 <= a[k]['confidence'] <= 1 for k in ('direction', 'momentum', 'regime', 'risk')):
             return 'WAIT', reasons + ['Jev confidence məlumatı etibarsızdır.']
-        # Entry assessments and CLOSE/leverage have independent confidence thresholds.
+        # Entry assessments and CLOSE have independent confidence thresholds.
         if any(a[k]['confidence'] < settings.min_confidence for k in ('direction', 'momentum', 'regime', 'risk')):
             reasons.append('Jev confidence həddindən aşağıdır.')
         if a['direction'].get('choice') != result['candidate']:

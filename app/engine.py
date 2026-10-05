@@ -142,7 +142,8 @@ class Engine:
                 snap, position = updated, current_position
             except JevError as exc:
                 ai_error = str(exc)
-                event(log, logging.WARNING, 'jev', symbol, exc)
+                event(log, logging.WARNING, 'jev', symbol, exc, reason_code=exc.code)
+                self.metrics.counts['jev_' + exc.code] += 1
         direction = ai['answers']['direction']['choice'] if ai else 'WAIT'
         tech = technical(snap, self.settings, direction)
         levels = research_levels(snap, direction, self.settings.risk)
@@ -158,6 +159,12 @@ class Engine:
             codes.append('jev_wait')
         if decision == 'WAIT' and not codes:
             codes.append('jev_assessment')
+        if decision in ('LONG', 'SHORT'):
+            event(log, logging.INFO, 'entry_analysis', symbol=symbol, direction=decision,
+                  observed_at=snap['observed_at'], candle_close=snap['frames']['15m']['close_time'],
+                  confidences={k: ai['answers'][k]['confidence'] for k in ('direction', 'momentum', 'regime', 'risk')},
+                  choices={k: ai['answers'][k]['choice'] for k in ('direction', 'momentum', 'regime', 'risk', 'driver')},
+                  levels=levels, spread_bps=snap['spread_bps'], funding_rate=snap['funding_rate'])
         return {**snap, **tech, 'decision': decision, 'reasons': reasons, 'ai': ai, 'ai_error': ai_error,
                 'levels': levels if decision != 'WAIT' else None, 'error': None,
                 'position_id': position['trade_id'] if position else None, 'rejection_codes': codes}

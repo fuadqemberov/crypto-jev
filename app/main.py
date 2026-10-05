@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 from starlette.responses import Response
 import asyncio
+import logging
 import secrets
 import time
 from contextlib import asynccontextmanager, suppress
@@ -20,6 +21,11 @@ STATIC = Path(__file__).parent / 'static'
 
 def create_app(settings: Settings | None = None, start_worker: bool = True) -> FastAPI:
     settings = settings or Settings.load()
+    application_log = logging.getLogger('app')
+    if not application_log.handlers:
+        application_log.addHandler(logging.StreamHandler())
+    application_log.setLevel(logging.INFO)
+    application_log.propagate = False
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

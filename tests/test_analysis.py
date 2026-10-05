@@ -185,3 +185,22 @@ def test_configuration_validation():
     with pytest.raises(ValueError): Settings(min_confidence=math.nan)
     with pytest.raises(ValueError): Settings(symbols=('../../secret',))
     with pytest.raises(ValueError): Settings(user='fuad')
+
+
+@pytest.mark.parametrize('status,code', [(401,'http_401'),(403,'http_403'),(400,'http_400'),(500,'http_500')])
+def test_jev_error_codes_do_not_include_upstream_body(status, code):
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(status, text='private-secret'))) as client:
+            with pytest.raises(JevError) as failure:
+                await Jev(client, Settings(api_key='private-secret')).evaluate({})
+            assert failure.value.code == code
+            assert 'private-secret' not in str(failure.value)
+    asyncio.run(run())
+
+
+def test_probability_failure_has_safe_diagnostic_code():
+    value = answer()
+    value['answers']['direction']['probabilities']['LONG'] = .2
+    with pytest.raises(JevError) as failure:
+        parse_response(value)
+    assert failure.value.code == 'schema_distribution'

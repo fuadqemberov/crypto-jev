@@ -229,7 +229,7 @@ def test_upgrade_restores_tighter_stop_after_freqtrade_reinitializes(strategy):
     strategy.wallets=SimpleNamespace(get_total_stake_amount=lambda:2000,get_available_stake_amount=lambda:1860)
     strategy.bot_loop_start(now)
     assert trade.stop_loss==95
-    assert strategy.custom_stoploss(trade.pair,trade,now,100,0)==pytest.approx(.05)
+    assert strategy.custom_stoploss(trade.pair,trade,now,100,0) is None
 
 
 def test_envelope_expiry_revokes_signal_before_its_own_ttl(strategy):
@@ -253,7 +253,7 @@ def test_daily_equity_cooldown_and_stale_mark(strategy, monkeypatch):
     assert risk['cooldowns']['BTC/USDT:USDT'] > now.timestamp()*1000
     strategy.wallets.get_total_stake_amount=lambda:2000.
     assert strategy._risk_state(now)['daily_loss_hit']
-    opened=SimpleNamespace(pair='ETH/USDT:USDT',calc_profit=lambda rate: SimpleNamespace(profit_abs=-50.))
+    opened=SimpleNamespace(pair='ETH/USDT:USDT',calculate_profit=lambda rate: SimpleNamespace(profit_abs=-50.))
     monkeypatch.setattr(Trade,'get_open_trades',lambda: [opened])
     strategy.marks={'ETH/USDT:USDT': {'price':100., 'observed_at':now.timestamp()*1000-16000}}
     assert not strategy._heartbeat(now)['risk_ready']
@@ -289,7 +289,7 @@ def test_short_stop_restored_once_and_then_read_from_trade(strategy):
     Trade.stoploss_reinitialization(-.5)
     strategy._restore_stops()
     assert trade.stop_loss==105 and not strategy.preserved_stops
-    assert strategy.custom_stoploss(trade.pair,trade,now,100,0)==pytest.approx(.05)
+    assert strategy.custom_stoploss(trade.pair,trade,now,100,0) is None
 
 
 def test_final_confirmation_checks_actual_amount_risk(strategy, monkeypatch):
@@ -297,3 +297,37 @@ def test_final_confirmation_checks_actual_amount_risk(strategy, monkeypatch):
     monkeypatch.setattr(Trade,'get_trades_proxy',lambda **kw: [])
     assert not strategy.confirm_trade_entry(value['pair'],'market',100,100,'GTC',now,tag(value),'long')
     assert strategy.rejections['margin']==1
+
+
+@pytest.mark.parametrize('short,entry,stop,target,precision', [
+    (True, .04877, .0492950097386, .0476899805228, 5),
+    (True, .06029, .0609884446833, .0589231106334, 5),
+    (False, .816, .803643201612, .841613596776, 4),
+])
+def test_fixed_stop_does_not_ratchet_on_price_precision(strategy, short, entry, stop, target, precision):
+    now = datetime.now(timezone.utc)
+    trade = Trade(pair='TEST/USDT:USDT', open_rate=entry, amount=1, stake_amount=1,
+                  fee_open=.0005, fee_close=.0005, leverage=6, is_short=short,
+                  enter_tag=f'jev:test:{stop}:{target}:6', price_precision=precision,
+                  precision_mode_price=2)
+    strategy.ft_stoploss_adjust(entry, trade, now, 0, 0)
+    protected = trade.stop_loss
+    for i in range(1000):
+        rate = entry * (1 + ((i % 11) - 5) * .0001)
+        strategy.ft_stoploss_adjust(rate, trade, now, 0, 0)
+    assert trade.stop_loss == protected
+    assert abs(protected - stop) < 10 ** -precision
+
+
+def test_risk_heartbeat_with_real_freqtrade_open_position(strategy, monkeypatch):
+    now = datetime.now(timezone.utc)
+    trade = Trade(pair='APT/USDT:USDT', open_rate=.816, amount=717.6, stake_amount=117.11232,
+                  fee_open=.0005, fee_close=.0005, leverage=5, is_short=False,
+                  trading_mode='futures')
+    monkeypatch.setattr(Trade, 'get_open_trades', lambda: [trade])
+    monkeypatch.setattr(Trade, 'get_trades_proxy', lambda **kw: [])
+    strategy.marks = {trade.pair: {'price':.81, 'observed_at':now.timestamp()*1000}}
+    heartbeat = strategy._heartbeat(now)
+    assert heartbeat['risk_ready']
+    assert heartbeat['unrealized'] == pytest.approx(trade.calculate_profit(.81).profit_abs)
+    assert heartbeat['equity'] == pytest.approx(2000 + heartbeat['unrealized'])

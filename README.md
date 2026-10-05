@@ -248,7 +248,7 @@ Yanlış, qeyri-sonlu və təhlükəsizlik tavanını aşan dəyərlər startup-
 node --check app/static/app.js
 ```
 
-188 backend test keçib; testlər real Freqtrade 2026.8 resolver/config/DB API ilə işləyir; exchange və AI cavabları mock-dur.
+199 backend test keçib; testlər real Freqtrade 2026.8 resolver/config/DB API ilə işləyir; exchange və AI cavabları mock-dur.
 `tests/operations-ui.cjs` şəbəkəsiz dashboard smoke testidir. Playwright və Chromium tələb edir.
 Bu mühitdə Chromium yüklənmədiyi üçün vizual browser yoxlaması tamamlanmayıb; JS sintaksis yoxlaması keçib.
 `tests/terminal-ui.cjs` ayrıca canlı bazar UI yoxlamasıdır; real order yaratmır.
@@ -292,3 +292,26 @@ sudo systemctl restart crypto-jev-freqtrade.service
 ```
 
 Data qovluğunu və trade DB-ni silmək tələb olunmur.
+
+## Order zərəri araşdırması / audit
+
+[5 oktyabr log araşdırması](docs/order-review-2026-10-05.md): real Freqtrade ilə aşkar edilmiş PnL API
+uyğunsuzluğu və SHORT stopun təkrar yuvarlaqlaşdırılma xətası düzəldilib. Mövcud daha sıx stoplar
+saxlanılır; upgrade onları genişləndirmir. Sabit SL artıq hər tick yenidən çevrilmir.
+
+JEV xətaları `reason_code` ilə (`http_401`, `http_429`, `schema_distribution`, `transport` və s.) loglanır;
+raw upstream body/credential loglanmır. Uyğun analiz üçün `entry_analysis`, yekun entry üçün
+`entry_approved`, SL qurularkən `protective_plan` strukturlaşdırılmış hadisələri yazılır.
+Bunlar JEV confidence-in win probability olduğunu göstərmir.
+
+Tarixçə və orderləri silmədən, DB-yə yazmadan son əməliyyatların qərar kontekstini çıxartmaq üçün:
+
+```bash
+.venv/bin/python -m app.audit --hours 6
+```
+
+Nəticə `data/jev-audit.json`-dur: son 10,000 tarixçə sətrindən həmin vaxtda açılmış trade simvollarının
+analizlərini və trade sahələrini çıxarır. Açar, config və raw error mətni çıxarılmır.
+Sıx skanda aid analiz limitdən kənarda qala bilər; audit yoxdursa qərarın doğruluğunu iddia etməyin.
+DB-lər silinibsə audit əvvəlki trade/analizi geri gətirmir. Gəlirlilik üçün ayrıca gələcək paper nəticələri
+lazımdır; üç itkiyə uyğun threshold optimizasiyası tətbiq edilməyib.
