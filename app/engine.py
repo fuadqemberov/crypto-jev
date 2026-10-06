@@ -1,4 +1,8 @@
-"""Independent priority/radar lanes with bounded workers and immediate publication."""
+"""Independent priority/radar lanes with bounded workers and immediate publication.
+
+With SYMBOLS=ALL the radar no longer analyses every market: the RSI heatmap picks the candidates
+(app.heatmap) and only those plus open positions get a full analysis.
+"""
 import asyncio
 import logging
 import time
@@ -6,6 +10,7 @@ from typing import Any
 import httpx
 from .config import Settings
 from .market import Market, demo_snapshot
+from .heatmap import Heatmap
 from .strategy import evaluate, STRATEGY_ID
 from .execution import Execution, pair_for
 from .metrics import Metrics, event
@@ -19,6 +24,7 @@ class Engine:
     def __init__(self, settings: Settings, client: httpx.AsyncClient, store: Store) -> None:
         self.settings, self.store = settings, store
         self.market = Market(client)
+        self.heatmap = Heatmap(settings, client, self.market)
         self.execution = Execution(settings, client, store)
         self.rows: dict[str, dict[str, Any]] = {}
         self.metrics = Metrics()
@@ -29,7 +35,9 @@ class Engine:
         self.lock = asyncio.Lock()
         self.inflight: set[str] = set()
         self.symbols = settings.symbols if settings.symbols != ('ALL',) else ()
-        self.top_volume: tuple[str, ...] = ()
+        # Ranked candidates for the priority lane: heatmap order, or 24h volume when the heatmap fails.
+        self.watchlist: tuple[str, ...] = ()
+        self.radar_symbols: tuple[str, ...] = ()
         self.discovery_error = None
         self.scan_completed = 0
         self.priority_last_scan = None
@@ -70,27 +78,41 @@ class Engine:
                     except Exception as exc:
                         self.discovery_error = 'Bazar siyahısı yenilənmədi; yeni girişlər bloklandı.'
                         event(log, logging.WARNING, 'discovery', error=exc)
-                try:
-                    self.top_volume = self.symbols if self.settings.demo or self.settings.symbols != ('ALL',) else await self.market.volume_ranking(self.symbols)
-                except Exception as exc:
-                    self.top_volume = ()
-                    event(log, logging.WARNING, 'volume_ranking', error=exc)
-                await self._batch(self.symbols, self.settings.radar_parallelism, 'radar')
+                self.radar_symbols = await self._radar_selection()
+                await self._batch(self.radar_symbols, self.settings.radar_parallelism, 'radar')
                 self.last_scan = int(time.time() * 1000)
                 self.next_scan = self.last_scan + self.settings.scan_seconds * 1000
             finally:
                 self.scanning = False
 
+    def _open_symbols(self) -> list[str]:
+        return [p['pair'].replace('/USDT:USDT', 'USDT') for p in self.execution.status().get('positions', [])]
+
+    async def _radar_selection(self) -> tuple[str, ...]:
+        if self.settings.demo or self.settings.symbols != ('ALL',):
+            self.watchlist = self.symbols
+            return self.symbols
+        try:
+            await self.heatmap.refresh(self.symbols)
+            self.watchlist = self.heatmap.select()
+        except Exception:
+            try:
+                self.watchlist = (await self.market.volume_ranking(self.symbols))[:self.settings.heatmap_size]
+            except Exception as exc:
+                self.watchlist = ()
+                event(log, logging.WARNING, 'volume_ranking', error=exc)
+        # Open positions are always re-analysed so exits never depend on the heatmap.
+        return tuple(dict.fromkeys(self._open_symbols() + list(self.watchlist)))
+
     def priority_symbols(self) -> tuple[str, ...]:
         now = int(time.time()*1000)
-        positions = self.execution.status().get('positions', [])
-        opened = [p['pair'].replace('/USDT:USDT', 'USDT') for p in positions]
+        opened = self._open_symbols()
         recent = sorted((r for r in self.rows.values()
                          if r.get('candidate') in ('LONG', 'SHORT')
                          and 0 <= now-r['observed_at'] < self.settings.recent_signal_seconds*1000),
                         key=lambda r: r['observed_at'], reverse=True)
         recent_symbols = list(dict.fromkeys(r['symbol'] for r in recent if r['symbol'] not in opened))
-        volume_symbols = [s for s in self.top_volume if s not in opened]
+        volume_symbols = [s for s in self.watchlist if s not in opened]
         size = self.settings.priority_size
         # Reserve space for both discovery sources; a sticky confident list cannot crowd out volume.
         candidates = list(dict.fromkeys(recent_symbols[:(size+1)//2] + volume_symbols[:size//2]
@@ -218,6 +240,7 @@ class Engine:
         return dict(rows=rows, scanning=self.scanning, last_scan=self.last_scan, next_scan=self.next_scan,
             actionable_count=sum(signal['action'] in ('LONG', 'SHORT') for signal in bridge['signals']),
             market_count=len(self.symbols), market_symbols=self.symbols, scan_completed=self.scan_completed,
+            radar_count=len(self.radar_symbols), radar_symbols=self.radar_symbols, heatmap=self.heatmap.status(),
             discovery_error=self.discovery_error, demo=self.settings.demo, strategy=STRATEGY_ID,
             storage_error=self.storage_error, runtime_errors=sorted(self.runtime_errors),
             execution=self.execution.status(), metrics=self.metrics.status(),

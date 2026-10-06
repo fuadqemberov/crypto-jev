@@ -59,6 +59,11 @@ class Settings:
     freqtrade_url: str = 'http://127.0.0.1:8083'
     freqtrade_user: str = ''
     freqtrade_password: str = field(default='', repr=False)
+    # RSI heatmap radar: only these markets get a full analysis when SYMBOLS=ALL.
+    heatmap_source: str = 'auto'
+    coinglass_api_key: str = field(default='', repr=False)
+    heatmap_size: int = 40
+    heatmap_trend_rsi: float = 55.
 
     def __post_init__(self) -> None:
         profiles = {'conservative': (30, 2, 1, 180), 'balanced': (15, 4, 2, 120), 'aggressive': (10, 6, 3, 90)}
@@ -91,6 +96,14 @@ class Settings:
         url = urlparse(self.freqtrade_url)
         if url.scheme != 'http' or url.hostname not in ('127.0.0.1', 'localhost', '::1') or url.username or url.password or url.path not in ('', '/') or url.query or url.fragment:
             raise ValueError('FREQTRADE_URL lokal HTTP ünvanı olmalıdır.')
+        if self.heatmap_source not in ('auto', 'coinglass', 'binance'):
+            raise ValueError('HEATMAP_SOURCE: auto, coinglass və ya binance.')
+        if self.heatmap_source == 'coinglass' and not self.coinglass_api_key:
+            raise ValueError('HEATMAP_SOURCE=coinglass üçün COINGLASS_API_KEY lazımdır.')
+        if type(self.heatmap_size) is not int or not 5 <= self.heatmap_size <= 200:
+            raise ValueError('HEATMAP_SIZE 5–200 olmalıdır.')
+        if not finite(self.heatmap_trend_rsi) or not 50 < self.heatmap_trend_rsi <= 70:
+            raise ValueError('HEATMAP_TREND_RSI 50–70 olmalıdır.')
         if bool(self.freqtrade_user) != bool(self.freqtrade_password):
             raise ValueError('Freqtrade istifadəçi və parolu birlikdə verilməlidir.')
 
@@ -124,4 +137,6 @@ class Settings:
                    demo=os.getenv('DEMO_MODE', 'false').lower() == 'true',
                    bridge_token=os.getenv('BRIDGE_TOKEN', ''), signal_ttl=optional_int('SIGNAL_TTL_SECONDS'),
                    freqtrade_url=os.getenv('FREQTRADE_URL', 'http://127.0.0.1:8083'),
-                   freqtrade_user=os.getenv('FREQTRADE_USER', ''), freqtrade_password=os.getenv('FREQTRADE_PASSWORD', ''))
+                   freqtrade_user=os.getenv('FREQTRADE_USER', ''), freqtrade_password=os.getenv('FREQTRADE_PASSWORD', ''),
+                   heatmap_source=os.getenv('HEATMAP_SOURCE', 'auto'), coinglass_api_key=os.getenv('COINGLASS_API_KEY', ''),
+                   heatmap_size=int(os.getenv('HEATMAP_SIZE', '40')), heatmap_trend_rsi=float(os.getenv('HEATMAP_TREND_RSI', '55')))

@@ -125,7 +125,7 @@ def test_open_positions_survive_watchlist_cap_and_recent_expires(tmp_path):
     store = Store(tmp_path/'engine.db'); engine = Engine(Settings(priority_size=1), None, store)
     connected(engine.execution)
     engine.execution.snapshot['positions'] = [{'pair':'BTC/USDT:USDT'}, {'pair':'ETH/USDT:USDT'}]
-    engine.top_volume = ('SOLUSDT','XRPUSDT')
+    engine.watchlist = ('SOLUSDT','XRPUSDT')
     assert engine.priority_symbols() == ('BTCUSDT','ETHUSDT','SOLUSDT')
     value = row(); value['symbol'] = 'DOGEUSDT'; value['candidate'] = 'LONG'
     engine.rows['DOGEUSDT'] = value
@@ -177,7 +177,7 @@ def test_symbol_timeout_never_publishes_previous_entry(tmp_path):
 
 def test_priority_reserves_volume_slots(tmp_path):
     store=Store(tmp_path/'priority.db');engine=Engine(Settings(priority_size=2),None,store)
-    engine.top_volume=('SOLUSDT',)
+    engine.watchlist=('SOLUSDT',)
     for symbol in ('BTCUSDT','ETHUSDT'):
         engine.rows[symbol]={**row(), 'symbol':symbol, 'candidate':'LONG'}
     chosen=engine.priority_symbols()

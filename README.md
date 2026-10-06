@@ -103,6 +103,21 @@ Dashboard yalnız loopback-da açılır. Uzaqdan SSH tuneli və ya autentifikasi
 reverse proxy istifadə edin; Freqtrade API-ni internetə açmayın. Windows üçün `run.cmd`
 və `run-paper.cmd` mövcuddur.
 
+### RSI heatmap radarı
+
+`SYMBOLS=ALL` olanda bütün bazarlar artıq tam analiz edilmir (gecikmə yaradırdı). Hər radar dövründə
+[CoinGlass RSI Heatmap](https://www.coinglass.com/pro/i/RsiHeatMap) məntiqi ilə RSI 1h/4h hesablanır və
+yalnız hər iki periodda eyni tərəfdə güclü olan bazarlar seçilir: LONG üçün ikisi də ≥ `HEATMAP_TREND_RSI`
+(default 55), SHORT üçün ≤ 100−55. Güclüyə görə sıralanan ilk `HEATMAP_SIZE` (default 40) bazar və
+bütün açıq mövqelər tam analizə gedir; prioritet lane də bu siyahını izləyir. Strategiya qaydaları dəyişmir.
+
+- `COINGLASS_API_KEY` verilibsə (CoinGlass API Standard planı və yuxarı) bir sorğu ilə
+  `/api/futures/rsi/list` oxunur; 15m RSI ifrat zonadadırsa bazar seçilmir.
+- Açar yoxdursa eyni heatmap Binance bağlanmış 1h şamlarından hesablanır (4h RSI eyni şamlardan yığılır).
+  İlk dövr ~1 dəqiqə (bir bazar = bir sorğu), sonra şamlar növbəti 1h bağlanışına qədər cache-dən gəlir.
+- Heatmap alınmasa radar 24s həcmə görə ilk `HEATMAP_SIZE` bazarı seçir və UI xəbərdarlıq göstərir.
+- Dashboard-da "Heatmap radarı" filtri seçilmiş bazarları RSI 1h/4h ilə göstərir.
+
 ### UI-dan idarəetmə: sıfırlama, restart, git
 
 Dashboard-da: **Bütün əməliyyatları sıfırla · 2,000 USDT**, **Yoxla**, **Git pull**, **Branch dəyiş**,
