@@ -96,28 +96,39 @@ document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{document.query
 $('scan').onclick=async()=>{try{$('scan').disabled=true;await api('/api/scan',{method:'POST',headers:{'X-Crypto-Radar':'1'}});await refresh();}catch(e){$('notice').textContent=e.message;$('scan').disabled=false;}};
 $('history-refresh').onclick=history;
 $('pause-entries').onclick=async()=>{try{await api('/api/execution/'+(state?.execution?.paused?'resume':'pause'),{method:'POST',headers:{'X-Crypto-Radar':'1'}});await refresh();}catch(e){$('execution-status').textContent=e.message;}};
-let adminInfo=null,restarting=false;
+let adminInfo=null,adminBusy=false;
 const post=(url,body)=>api(url,{method:'POST',headers:{'X-Crypto-Radar':'1','Content-Type':'application/json'},body:JSON.stringify(body||{})});
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function renderAdmin(){
- const a=adminInfo,busy=restarting||!a,ok=a&&!a.error&&a.supervised;
+ const a=adminInfo,ready=!!a?.control&&!adminBusy,git=ready&&!a.error;
  if(a)$('git-info').textContent=a.error?a.error:`Branch ${a.branch} · ${a.commit}${a.behind?` · ${a.behind} yeni commit`:a.behind===0?' · aktual':''}${a.dirty?' · lokal dəyişiklik var':''}`;
  const sel=$('branch'),keep=sel.value;if(a?.branches){sel.replaceChildren(...a.branches.map(b=>{const o=node('option',b);o.value=b;return o;}));sel.value=keep&&a.branches.includes(keep)?keep:a.branch;}
- for(const id of ['switch-branch','git-pull'])$(id).disabled=busy||!ok||a.dirty;
- $('git-fetch').disabled=busy||!a||!!a.error;$('restart-app').disabled=$('reset-paper').disabled=busy||!a?.supervised;
- if(a&&!a.supervised&&!restarting)$('admin-status').textContent='Restart / sıfırlama / git düymələri üçün tətbiqi run.cmd və ya run-paper.cmd ilə başladın.';
+ $('git-fetch').disabled=!git;$('git-pull').disabled=$('switch-branch').disabled=!git||a.dirty;$('restart-app').disabled=$('reset-paper').disabled=!ready;
+ if(adminBusy||!a)return;
+ if(!a.control)$('admin-status').textContent='İdarəetmə qoşulmayıb: Windows-da run.cmd / run-paper.cmd ilə başladın, serverdə bir dəfə "sudo bash deploy/install-control.sh" işlədin.';
+ else if(a.pending_stale)$('admin-status').textContent='Sorğu 30 saniyədən çoxdur icra olunmur; idarəetmə servisini yoxlayın (journalctl -u crypto-jev-control).';
 }
-async function loadAdmin(fetch){try{adminInfo=await api('/api/admin/info'+(fetch?'?fetch=true':''));}catch(e){if(!restarting)$('admin-status').textContent=e.message;}renderAdmin();}
+async function loadAdmin(){try{adminInfo=await api('/api/admin/info');}catch(e){if(!adminBusy)$('admin-status').textContent=e.message;}renderAdmin();}
 async function adminAction(action,body,message){
- try{restarting=true;renderAdmin();$('admin-status').textContent=message;const r=await post('/api/admin/'+action,body);if(r.restarting===false){$('admin-status').textContent=r.output;await loadAdmin(false);return;}$('admin-status').textContent=`${message}${r.output?'\n'+r.output:''}\nTətbiq yenidən başladılır…`;
-  // Wait for the old server to go down, then for the new one to answer before reloading.
-  const started=Date.now();let down=false;while(Date.now()-started<180000){await new Promise(r=>setTimeout(r,1500));try{await api('/health');if(down||Date.now()-started>30000){location.reload();return;}}catch{down=true;}}
-  $('admin-status').textContent='Tətbiq 3 dəqiqə ərzində qayıtmadı; konsol pəncərəsini yoxlayın.';
- }catch(e){$('admin-status').textContent=e.message;}finally{restarting=false;renderAdmin();}
+ try{
+  adminBusy=true;renderAdmin();$('admin-status').textContent=message;
+  const {id}=await post('/api/admin/'+action,body),started=Date.now();let down=false;
+  // The executor writes a result with our id; a restart takes the server down meanwhile.
+  while(Date.now()-started<300000){
+   await sleep(1500);
+   try{const info=await api('/api/admin/info');adminInfo=info;const r=info.result;
+    if(r?.id===id){if(r.restarted||down){$('admin-status').textContent=r.message+'\nSəhifə yenilənir…';await sleep(1200);location.reload();return;}
+     $('admin-status').textContent=(r.ok?'':'Xəta: ')+r.message;return;}
+    if(info.pending_stale){$('admin-status').textContent='İcraçı sorğunu götürmür; idarəetmə servisini yoxlayın.';return;}
+   }catch{down=true;$('admin-status').textContent=message+'\nTətbiq yenidən başladılır…';}
+  }
+  $('admin-status').textContent='5 dəqiqə ərzində cavab gəlmədi; servis loglarını yoxlayın.';
+ }catch(e){$('admin-status').textContent=e.message;}finally{adminBusy=false;renderAdmin();}
 }
-$('git-fetch').onclick=async()=>{$('admin-status').textContent='Uzaq repo yoxlanılır…';await loadAdmin(true);if(adminInfo&&!adminInfo.error)$('admin-status').textContent='Yoxlandı.';};
+$('git-fetch').onclick=()=>adminAction('fetch',null,'Uzaq repo yoxlanılır…');
 $('git-pull').onclick=()=>confirm('Son dəyişiklikləri çəkib (git pull) tətbiqi restart edək?')&&adminAction('pull',null,'Git pull edilir…');
 $('switch-branch').onclick=()=>{const b=$('branch').value;if(b&&b!==adminInfo?.branch&&confirm(`"${b}" branch-ına keçib tətbiqi restart edək?`))adminAction('switch',{branch:b},`${b} branch-ına keçilir…`);};
-$('restart-app').onclick=()=>confirm('Dashboard və Freqtrade yenidən başladılsın?')&&adminAction('restart',null,'Restart sorğusu göndərildi…');
+$('restart-app').onclick=()=>confirm('Dashboard və Freqtrade yenidən başladılsın?')&&adminAction('restart',null,'Restart edilir…');
 $('reset-paper').onclick=()=>confirm('BÜTÜN açıq və bağlanmış virtual əməliyyatlar silinəcək, balans 2,000 USDT olacaq. Köhnə baza data/backups qovluğunda saxlanılır. Davam edək?')&&adminAction('reset',null,'Əməliyyatlar sıfırlanır…');
-loadAdmin(false);
+loadAdmin();
 (async function poll(){await refresh();setTimeout(poll,5000);})();history();

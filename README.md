@@ -103,20 +103,32 @@ Dashboard yalnız loopback-da açılır. Uzaqdan SSH tuneli və ya autentifikasi
 reverse proxy istifadə edin; Freqtrade API-ni internetə açmayın. Windows üçün `run.cmd`
 və `run-paper.cmd` mövcuddur.
 
-### UI-dan idarəetmə (supervisor)
+### UI-dan idarəetmə: sıfırlama, restart, git
 
-`run.cmd` / `run-paper.cmd` dashboard-u və Freqtrade-i `python -m app.supervisor` altında işlədir.
-Bu rejimdə dashboard-da aşağıdakı düymələr aktivdir:
+Dashboard-da: **Bütün əməliyyatları sıfırla · 2,000 USDT**, **Yoxla**, **Git pull**, **Branch dəyiş**,
+**Tətbiqi restart et**. Dashboard prosesləri özü idarə etmir; sorğunu `data/supervisor/request.json`
+faylına yazır, icraçı yerinə yetirir və nəticəni `result.json`-a yazır (UI onu göstərir).
 
-- **Bütün əməliyyatları sıfırla · 2,000 USDT** — Freqtrade dayandırılır, `data/freqtrade-paper.sqlite`
-  silinmir, `data/backups/reset-<vaxt>/` qovluğuna köçürülür, `dry_run_wallet` 2000 edilir və hər şey yenidən başlayır.
-- **Yoxla / Git pull / Branch dəyiş** — yalnız `git fetch`, `git pull --ff-only` və `git switch`;
-  commit edilməmiş dəyişiklik varsa imtina edir. Uğurlu pull/switch-dən sonra tətbiq avtomatik restart olur.
-- **Tətbiqi restart et** — supervisor hər iki prosesi dayandırıb `3` kodu ilə çıxır; skript asılılıqları
-  yeniləyir, konfiqurasiyanı `--upgrade` edir və yeni kodla (supervisor daxil) yenidən başladır.
+- Sıfırlama: Freqtrade dayanır, `freqtrade-paper.sqlite` silinmir, `data/backups/reset-<vaxt>/`
+  qovluğuna köçürülür, `dry_run_wallet` 2000 edilir, servislər yenidən başlayır.
+- Git: yalnız `fetch`, `pull --ff-only`, `switch`; commit edilməmiş dəyişiklik varsa imtina edir və
+  heç nə dayandırılmır. Uğurlu pull/switch-dən sonra avtomatik restart olur.
 
-Dashboard prosesləri özü idarə etmir: sorğunu `data/supervisor/request.json` faylına yazır, supervisor icra edir.
-Supervisor-suz (məs. systemd) işə salındıqda bu düymələr deaktivdir.
+**Linux server (systemd)** — bir dəfə quraşdırın:
+
+```bash
+sudo bash deploy/install-control.sh
+```
+
+Skript dashboard/freqtrade servis adlarını tapır (`crypto-jev-dashboard`/`crypto-jev-freqtrade` və ya
+`crypto-jev`/`crypto-jev-paper`); fərqlidirsə arqument kimi verin:
+`sudo bash deploy/install-control.sh my-dashboard.service my-freqtrade.service`.
+`crypto-jev-control.path` sorğu faylını izləyir, root `crypto-jev-control.service` isə git/pip/upgrade-i
+repo sahibi adından, `systemctl`-i root kimi işlədir. `pyproject.toml` və ya `requirements.lock` dəyişibsə
+`pip install -e '.[paper]'` avtomatik icra olunur. Log: `journalctl -u crypto-jev-control.service`.
+
+**Windows** — `run.cmd` / `run-paper.cmd` hər iki prosesi `python -m app.supervisor` altında işlədir;
+restart zamanı skript asılılıqları və konfiqurasiyanı yeniləyib yeni kodla yenidən başladır.
 
 ## Mövcud quraşdırmadan miqrasiya
 

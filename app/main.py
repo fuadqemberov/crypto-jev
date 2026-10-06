@@ -12,7 +12,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic
-from . import admin, supervisor
+from . import admin, control as ui_control, supervisor
 from .config import Settings
 from .engine import Engine
 from .store import Store
@@ -170,39 +170,47 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
 
     root = Path(__file__).resolve().parent.parent
 
-    def supervised() -> None:
-        if os.environ.get(supervisor.ENV_FLAG) != '1':
-            raise HTTPException(409, 'Tətbiq supervisor ilə işə salınmayıb; run.cmd və ya run-paper.cmd ilə başladın.')
+    def control_mode() -> str | None:
+        # Windows supervisor marks its children; Linux deploy/install-ui_control.sh writes the systemd marker.
+        if os.environ.get(supervisor.ENV_FLAG) == '1':
+            return 'supervisor'
+        return 'systemd' if (ui_control.control_dir(settings.data_dir) / 'systemd.json').exists() else None
 
     @app.get('/api/admin/info')
-    async def admin_info(fetch: bool = False) -> dict[str, Any]:
+    async def admin_info() -> dict[str, Any]:
         try:
-            value = await admin.info(root, fetch)
+            value = await asyncio.to_thread(admin.info, root)
         except admin.GitError as exc:
             value = {'error': str(exc)}
-        return {**value, 'supervised': os.environ.get(supervisor.ENV_FLAG) == '1', 'wallet': supervisor.WALLET}
+        waiting = ui_control.pending(settings.data_dir)
+        stale = bool(waiting) and time.time()*1000 - (waiting.get('requested_at') or 0) > ui_control.REQUEST_STALE_MS
+        return {**value, 'control': control_mode(), 'wallet': ui_control.WALLET, 'pending': waiting,
+                'pending_stale': stale, 'result': ui_control.read_result(settings.data_dir)}
 
     @app.post('/api/admin/{action}', status_code=202)
     async def admin_action(action: str, request: Request) -> dict[str, Any]:
-        if action not in ('restart', 'reset', 'pull', 'switch'):
+        if action not in ui_control.ACTIONS:
             raise HTTPException(404)
-        supervised()
-        output = ''
-        try:
-            if action == 'pull':
-                output = await admin.pull(root)
-            elif action == 'switch':
+        if not control_mode():
+            raise HTTPException(409, 'İdarəetmə qoşulmayıb: Windows-da run.cmd ilə başladın, serverdə '
+                                     'bir dəfə "sudo bash deploy/install-ui_control.sh" işlədin.')
+        branch = None
+        if action == 'switch':
+            try:
                 body = await request.json()
-                output = await admin.switch(root, str(body.get('branch', '')) if isinstance(body, dict) else '')
-        except admin.GitError as exc:
-            raise HTTPException(409, str(exc)) from None
+            except ValueError:
+                body = None
+            branch = str(body.get('branch', '')) if isinstance(body, dict) else ''
+        waiting = ui_control.pending(settings.data_dir)
+        if waiting and time.time()*1000 - (waiting.get('requested_at') or 0) <= ui_control.REQUEST_STALE_MS:
+            raise HTTPException(409, 'Əvvəlki sorğu hələ icra olunur.')
+        try:
+            request_id = ui_control.request(settings.data_dir, action, branch)
         except ValueError:
-            raise HTTPException(422, 'Sorğu formatı etibarsızdır.') from None
-        if action == 'pull' and 'Already up to date' in output:
-            return {'restarting': False, 'output': 'Artıq aktualdır; restart lazım deyil.'}
-        # Pulled or switched code only takes effect after a restart, so git actions restart too.
-        supervisor.request(settings.data_dir, 'reset' if action == 'reset' else 'restart')
-        return {'restarting': True, 'output': output[-2000:]}
+            raise HTTPException(422, 'Branch adı etibarsızdır.') from None
+        except OSError:
+            raise HTTPException(503, 'Sorğu faylı yazılmadı.') from None
+        return {'id': request_id}
 
     return app
 
