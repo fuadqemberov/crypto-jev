@@ -96,4 +96,28 @@ document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{document.query
 $('scan').onclick=async()=>{try{$('scan').disabled=true;await api('/api/scan',{method:'POST',headers:{'X-Crypto-Radar':'1'}});await refresh();}catch(e){$('notice').textContent=e.message;$('scan').disabled=false;}};
 $('history-refresh').onclick=history;
 $('pause-entries').onclick=async()=>{try{await api('/api/execution/'+(state?.execution?.paused?'resume':'pause'),{method:'POST',headers:{'X-Crypto-Radar':'1'}});await refresh();}catch(e){$('execution-status').textContent=e.message;}};
+let adminInfo=null,restarting=false;
+const post=(url,body)=>api(url,{method:'POST',headers:{'X-Crypto-Radar':'1','Content-Type':'application/json'},body:JSON.stringify(body||{})});
+function renderAdmin(){
+ const a=adminInfo,busy=restarting||!a,ok=a&&!a.error&&a.supervised;
+ if(a)$('git-info').textContent=a.error?a.error:`Branch ${a.branch} · ${a.commit}${a.behind?` · ${a.behind} yeni commit`:a.behind===0?' · aktual':''}${a.dirty?' · lokal dəyişiklik var':''}`;
+ const sel=$('branch'),keep=sel.value;if(a?.branches){sel.replaceChildren(...a.branches.map(b=>{const o=node('option',b);o.value=b;return o;}));sel.value=keep&&a.branches.includes(keep)?keep:a.branch;}
+ for(const id of ['switch-branch','git-pull'])$(id).disabled=busy||!ok||a.dirty;
+ $('git-fetch').disabled=busy||!a||!!a.error;$('restart-app').disabled=$('reset-paper').disabled=busy||!a?.supervised;
+ if(a&&!a.supervised&&!restarting)$('admin-status').textContent='Restart / sıfırlama / git düymələri üçün tətbiqi run.cmd və ya run-paper.cmd ilə başladın.';
+}
+async function loadAdmin(fetch){try{adminInfo=await api('/api/admin/info'+(fetch?'?fetch=true':''));}catch(e){if(!restarting)$('admin-status').textContent=e.message;}renderAdmin();}
+async function adminAction(action,body,message){
+ try{restarting=true;renderAdmin();$('admin-status').textContent=message;const r=await post('/api/admin/'+action,body);if(r.restarting===false){$('admin-status').textContent=r.output;await loadAdmin(false);return;}$('admin-status').textContent=`${message}${r.output?'\n'+r.output:''}\nTətbiq yenidən başladılır…`;
+  // Wait for the old server to go down, then for the new one to answer before reloading.
+  const started=Date.now();let down=false;while(Date.now()-started<180000){await new Promise(r=>setTimeout(r,1500));try{await api('/health');if(down||Date.now()-started>30000){location.reload();return;}}catch{down=true;}}
+  $('admin-status').textContent='Tətbiq 3 dəqiqə ərzində qayıtmadı; konsol pəncərəsini yoxlayın.';
+ }catch(e){$('admin-status').textContent=e.message;}finally{restarting=false;renderAdmin();}
+}
+$('git-fetch').onclick=async()=>{$('admin-status').textContent='Uzaq repo yoxlanılır…';await loadAdmin(true);if(adminInfo&&!adminInfo.error)$('admin-status').textContent='Yoxlandı.';};
+$('git-pull').onclick=()=>confirm('Son dəyişiklikləri çəkib (git pull) tətbiqi restart edək?')&&adminAction('pull',null,'Git pull edilir…');
+$('switch-branch').onclick=()=>{const b=$('branch').value;if(b&&b!==adminInfo?.branch&&confirm(`"${b}" branch-ına keçib tətbiqi restart edək?`))adminAction('switch',{branch:b},`${b} branch-ına keçilir…`);};
+$('restart-app').onclick=()=>confirm('Dashboard və Freqtrade yenidən başladılsın?')&&adminAction('restart',null,'Restart sorğusu göndərildi…');
+$('reset-paper').onclick=()=>confirm('BÜTÜN açıq və bağlanmış virtual əməliyyatlar silinəcək, balans 2,000 USDT olacaq. Köhnə baza data/backups qovluğunda saxlanılır. Davam edək?')&&adminAction('reset',null,'Əməliyyatlar sıfırlanır…');
+loadAdmin(false);
 (async function poll(){await refresh();setTimeout(poll,5000);})();history();

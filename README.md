@@ -103,6 +103,21 @@ Dashboard yalnız loopback-da açılır. Uzaqdan SSH tuneli və ya autentifikasi
 reverse proxy istifadə edin; Freqtrade API-ni internetə açmayın. Windows üçün `run.cmd`
 və `run-paper.cmd` mövcuddur.
 
+### UI-dan idarəetmə (supervisor)
+
+`run.cmd` / `run-paper.cmd` dashboard-u və Freqtrade-i `python -m app.supervisor` altında işlədir.
+Bu rejimdə dashboard-da aşağıdakı düymələr aktivdir:
+
+- **Bütün əməliyyatları sıfırla · 2,000 USDT** — Freqtrade dayandırılır, `data/freqtrade-paper.sqlite`
+  silinmir, `data/backups/reset-<vaxt>/` qovluğuna köçürülür, `dry_run_wallet` 2000 edilir və hər şey yenidən başlayır.
+- **Yoxla / Git pull / Branch dəyiş** — yalnız `git fetch`, `git pull --ff-only` və `git switch`;
+  commit edilməmiş dəyişiklik varsa imtina edir. Uğurlu pull/switch-dən sonra tətbiq avtomatik restart olur.
+- **Tətbiqi restart et** — supervisor hər iki prosesi dayandırıb `3` kodu ilə çıxır; skript asılılıqları
+  yeniləyir, konfiqurasiyanı `--upgrade` edir və yeni kodla (supervisor daxil) yenidən başladır.
+
+Dashboard prosesləri özü idarə etmir: sorğunu `data/supervisor/request.json` faylına yazır, supervisor icra edir.
+Supervisor-suz (məs. systemd) işə salındıqda bu düymələr deaktivdir.
+
 ## Mövcud quraşdırmadan miqrasiya
 
 **DB silmək və balansı sıfırlamaq lazım deyil.** `.env`, `data/analysis.db`,

@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 from starlette.responses import Response
 import asyncio
+import os
 import secrets
 import time
 from contextlib import asynccontextmanager, suppress
@@ -11,6 +12,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic
+from . import admin, supervisor
 from .config import Settings
 from .engine import Engine
 from .store import Store
@@ -165,6 +167,42 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
         app.state.last_manual = time.monotonic()
         app.state.manual_task = asyncio.create_task(app.state.engine.scan())
         return {'message': 'Skan başladıldı.'}
+
+    root = Path(__file__).resolve().parent.parent
+
+    def supervised() -> None:
+        if os.environ.get(supervisor.ENV_FLAG) != '1':
+            raise HTTPException(409, 'Tətbiq supervisor ilə işə salınmayıb; run.cmd və ya run-paper.cmd ilə başladın.')
+
+    @app.get('/api/admin/info')
+    async def admin_info(fetch: bool = False) -> dict[str, Any]:
+        try:
+            value = await admin.info(root, fetch)
+        except admin.GitError as exc:
+            value = {'error': str(exc)}
+        return {**value, 'supervised': os.environ.get(supervisor.ENV_FLAG) == '1', 'wallet': supervisor.WALLET}
+
+    @app.post('/api/admin/{action}', status_code=202)
+    async def admin_action(action: str, request: Request) -> dict[str, Any]:
+        if action not in ('restart', 'reset', 'pull', 'switch'):
+            raise HTTPException(404)
+        supervised()
+        output = ''
+        try:
+            if action == 'pull':
+                output = await admin.pull(root)
+            elif action == 'switch':
+                body = await request.json()
+                output = await admin.switch(root, str(body.get('branch', '')) if isinstance(body, dict) else '')
+        except admin.GitError as exc:
+            raise HTTPException(409, str(exc)) from None
+        except ValueError:
+            raise HTTPException(422, 'Sorğu formatı etibarsızdır.') from None
+        if action == 'pull' and 'Already up to date' in output:
+            return {'restarting': False, 'output': 'Artıq aktualdır; restart lazım deyil.'}
+        # Pulled or switched code only takes effect after a restart, so git actions restart too.
+        supervisor.request(settings.data_dir, 'reset' if action == 'reset' else 'restart')
+        return {'restarting': True, 'output': output[-2000:]}
 
     return app
 
