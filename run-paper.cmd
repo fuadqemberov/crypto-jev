@@ -12,6 +12,6 @@ if not exist user_data\config.paper.json .venv\Scripts\python.exe -m app.paper
 if errorlevel 1 exit /b 1
 .venv\Scripts\python.exe -m app.paper --upgrade
 if errorlevel 1 exit /b 1
-echo Only virtual trading. Configure TYPESAFE_API_KEY in .env; use the dashboard restart button after editing it.
+echo Only virtual trading. Use the dashboard restart button after editing .env.
 .venv\Scripts\python.exe -m app.supervisor
 if %errorlevel%==3 goto start

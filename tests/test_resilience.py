@@ -54,8 +54,7 @@ def test_storage_read_failure_blocks_entries_and_close(tmp_path):
     store.close()
     payload = execution.signals([value])
     assert not payload['entries_enabled'] and 'storage_error' in payload['diagnostics']['blocks']
-    assert payload['signals'][0]['action'] == 'WAIT'
-    assert 'close_trade_id' not in payload['signals'][0]
+    assert payload['signals'] == []  # Neither an entry nor an unverified close.
 
 
 def test_bridge_strict_types_and_freshness():

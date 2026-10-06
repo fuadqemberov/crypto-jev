@@ -1,7 +1,7 @@
 """Independent priority/radar lanes with bounded workers and immediate publication.
 
 With SYMBOLS=ALL the radar no longer analyses every market: the RSI heatmap picks the candidates
-(app.heatmap) and only those plus open positions get a full analysis.
+(RSI + MACD, app.heatmap) and only those plus open positions get a full analysis.
 """
 import asyncio
 import logging
@@ -24,7 +24,7 @@ class Engine:
     def __init__(self, settings: Settings, client: httpx.AsyncClient, store: Store) -> None:
         self.settings, self.store = settings, store
         self.market = Market(client)
-        self.heatmap = Heatmap(settings, client, self.market)
+        self.heatmap = Heatmap(settings, self.market)
         self.execution = Execution(settings, client, store)
         self.rows: dict[str, dict[str, Any]] = {}
         self.metrics = Metrics()
@@ -127,12 +127,7 @@ class Engine:
         return {**snap, **result, 'error': 'Bazar məlumatı yoxlanmadı.' if result['rejection_codes'] == ['market_data'] else None,
                 'position_id': position['trade_id'] if position else None}
 
-    async def _scan_symbol(self, symbol: str, semaphore: asyncio.Semaphore | None = None,
-                           lane: str = 'radar') -> None:
-        if semaphore is not None:
-            async with semaphore:
-                await self._scan_symbol(symbol, lane=lane)
-            return
+    async def _scan_symbol(self, symbol: str, lane: str = 'radar') -> None:
         if symbol in self.inflight:
             self.metrics.counts['overlap_skipped'] += 1
             return
@@ -218,24 +213,29 @@ class Engine:
         except Exception as exc:
             event(log, logging.WARNING, 'position_marks', error=exc)
 
-    def signals(self) -> dict[str, Any]:
+    def _evaluate(self) -> tuple[dict[str, Any], dict[str, list[str]]]:
         blocks = tuple(code for code, active in (('discovery', self.discovery_error),
                        ('worker_error', self.runtime_errors)) if active)
-        return self.execution.signals(self.rows.values(), self.storage_error, blocks)
+        return self.execution.evaluate(self.rows.values(), self.storage_error, blocks)
+
+    def signals(self) -> dict[str, Any]:
+        return self._evaluate()[0]
 
     def status(self) -> dict[str, Any]:
         now = int(time.time()*1000)
-        bridge = self.signals()
+        bridge, why_not = self._evaluate()
         signals = {signal['pair']: signal for signal in bridge['signals']}
         rows = []
         for row in self.rows.values():
             stale = not 0 <= now-row['observed_at'] < self.settings.signal_ttl*1000
-            signal = signals.get(pair_for(row['symbol']))
-            execution_action = signal['action'] if signal else 'WAIT'
-            execution_blocks = (signal.get('entry_blocks', []) if signal else
-                                ['ttl' if stale else 'analysis_error' if row.get('error') else 'schema'])
-            rows.append({**row, 'planned_leverage': signal.get('leverage_requested') if signal else None, 'execution_ready': execution_action in ('LONG', 'SHORT'),
-                'execution_action': execution_action, 'execution_blocks': execution_blocks, 'stale': stale, 'decision': 'WAIT' if stale else row['decision'],
+            pair = pair_for(row['symbol'])
+            signal = signals.get(pair)
+            ready = bool(signal) and signal['action'] in ('LONG', 'SHORT')
+            # No entry: the reasons replace a bare WAIT in the dashboard.
+            execution_blocks = [] if ready else why_not.get(pair) or ['ttl' if stale else 'analysis_error' if row.get('error') else 'schema']
+            rows.append({**row, 'planned_leverage': signal.get('leverage_requested') if ready else None, 'execution_ready': ready,
+                'execution_action': signal['action'] if ready else None, 'execution_blocks': execution_blocks, 'stale': stale,
+                'decision': 'WAIT' if stale else row['decision'],
                 'analysis_age_seconds': max(0, (now-row['observed_at'])//1000), 'levels': None if stale else row.get('levels')})
         return dict(rows=rows, scanning=self.scanning, last_scan=self.last_scan, next_scan=self.next_scan,
             actionable_count=sum(signal['action'] in ('LONG', 'SHORT') for signal in bridge['signals']),

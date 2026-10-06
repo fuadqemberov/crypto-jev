@@ -97,13 +97,13 @@ def upgrade(root: Path = Path('.')) -> Path:
     """Migrate only execution settings; preserve wallet DB, credentials and symbols."""
     target = root / 'user_data' / 'config.paper.json'
     config = json.loads(target.read_text(encoding='utf-8'))
-    if config.get('dry_run') is not True or config.get('strategy') not in ('JevBridgeStrategy', 'SignalBridgeStrategy'):
+    if config.get('dry_run') is not True or config.get('strategy') != 'SignalBridgeStrategy':
         raise ValueError('Yalnız paper bridge dry-run konfiqurasiyası yenilənə bilər.')
     settings = Settings.load()
-    bridge = config.get('signal_bridge', config.get('jev_bridge'))
+    bridge = config.get('signal_bridge')
     if not isinstance(bridge, dict) or not isinstance(bridge.get('token'), str):
         raise ValueError('Bridge configuration missing')
-    changes = {'strategy': 'SignalBridgeStrategy', 'signal_bridge': bridge, 'risk_policy': asdict(settings.risk), 'internals': {**config.get('internals', {}), 'process_throttle_secs': settings.bridge_poll_seconds}, 'max_open_trades': -1, 'stake_amount': 140, 'stoploss': -.50,
+    changes = {'risk_policy': asdict(settings.risk), 'internals': {**config.get('internals', {}), 'process_throttle_secs': settings.bridge_poll_seconds}, 'max_open_trades': -1, 'stake_amount': 140, 'stoploss': -.50,
                'pairlists': execution_pairlists(bridge['token'], settings.bridge_poll_seconds)}
     if all(config.get(k) == v for k, v in changes.items()):
         return target
@@ -112,8 +112,6 @@ def upgrade(root: Path = Path('.')) -> Path:
     if os.name != 'nt':
         backup.chmod(0o600)
     config.update(changes)
-    config.pop('jev_bridge', None)
-    config.pop('jev_risk', None)
     # Atomic replacement: an interrupted upgrade leaves the original or complete new config.
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=target.parent,
                                      prefix='.config.paper.', suffix='.tmp', delete=False) as handle:

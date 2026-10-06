@@ -33,7 +33,7 @@ def trade_plan(trade: Trade) -> tuple[float, float] | None:
             return None
         prefix, identity, stop, target = parts[:4]
         stop, target = float(stop), float(target)
-        if prefix in ('rule', 'jev') and identity and all(number(v) and v > 0 for v in (stop, target)):
+        if prefix == 'rule' and identity and all(number(v) and v > 0 for v in (stop, target)):
             return stop, target
     except (AttributeError, TypeError, ValueError):
         pass
@@ -69,7 +69,7 @@ class SignalBridgeStrategy(IStrategy):
             raise ValueError('Run python -m app.paper --upgrade to remove the position count cap.')
         if self.stoploss != -.50:
             raise ValueError('Run python -m app.paper --upgrade to update the leverage-aware stop fallback.')
-        bridge = self.config.get('signal_bridge', self.config.get('jev_bridge', {}))
+        bridge = self.config.get('signal_bridge', {})
         url = urlparse(bridge.get('url', ''))
         if url.scheme != 'http' or url.hostname not in ('localhost', '127.0.0.1', '::1') or url.username or url.password or url.path not in ('', '/') or url.query or url.fragment:
             raise ValueError('The signal bridge must be a local HTTP service.')
@@ -85,7 +85,7 @@ class SignalBridgeStrategy(IStrategy):
             raise ValueError('Real exchange credentials are forbidden, including in paper mode.')
         if self.config.get('force_entry_enable') is not False:
             raise ValueError('Forced entries must be disabled.')
-        self.policy = RiskPolicy(**self.config.get('risk_policy', self.config.get('jev_risk', {})))
+        self.policy = RiskPolicy(**self.config.get('risk_policy', {}))
         self.bridge = bridge
         self.rejections = Counter()
         self.bridge_failures = 0

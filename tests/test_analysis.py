@@ -83,7 +83,6 @@ def test_store_restart_and_demo_engine(tmp_path):
             e=Engine(Settings(demo=True,symbols=('BTCUSDT',)),c,store)
             await e.scan()
             assert e.status()['rows'][0]['decision']=='WAIT'
-            assert 'ai' not in e.status()['rows'][0]
             e.rows['BTCUSDT']['observed_at']=0
             assert e.status()['rows'][0]['stale']
     asyncio.run(run()); store.close()
@@ -92,7 +91,7 @@ def test_store_restart_and_demo_engine(tmp_path):
     store.close()
 
 
-def test_no_key_means_no_ai_calls_and_errors_clear_old_signal(tmp_path):
+def test_market_error_clears_old_signal(tmp_path):
     async def run():
         store=Store(tmp_path/'e.db')
         async with httpx.AsyncClient() as c:
@@ -100,7 +99,7 @@ def test_no_key_means_no_ai_calls_and_errors_clear_old_signal(tmp_path):
             async def market(symbol): return demo_snapshot(symbol)
             e.market.snapshot=market
             await e.scan()
-            assert 'ai' not in e.rows['BTCUSDT'] and e.rows['BTCUSDT']['decision']=='WAIT'
+            assert e.rows['BTCUSDT']['decision']=='WAIT'
             async def fail(symbol): raise ValueError('network')
             e.rows['BTCUSDT']['decision']='LONG';e.market.snapshot=fail
             await e.scan()

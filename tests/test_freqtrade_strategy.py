@@ -65,7 +65,7 @@ def test_bridge_to_entry_and_risk_sizing(strategy, tmp_path, monkeypatch):
     row = dict(symbol='BTCUSDT', observed_at=value['observed_at'], decision='LONG',
                levels={**value['levels'], 'funding_cost': 0.}, frames={'15m': {'close_time': 123}},
                strategy='trend-reclaim-v1',
-               error=None, ai_error=None)
+               error=None)
     payload = execution.signals([row])
     strategy.dp.current_whitelist = lambda: payload['pairs']
     now = datetime.now(timezone.utc)
@@ -179,9 +179,9 @@ def test_background_failure_clears_previous_signal(strategy):
     assert strategy.signals=={} and not strategy.entries_enabled
 
 
-# Risk-based target: 2% stop -> 4x, 0.2% stop -> 20x; JEV choice, exchange max and the 20x ceiling cap it.
+# Risk-based target: 2% stop -> 4x, 0.2% stop -> 20x; requested leverage, exchange max and the 20x ceiling cap it.
 @pytest.mark.parametrize('requested,stop,exchange_max,expected', [(5,98,125,4),(100,98,125,4),(2,98,125,2),(100,99.8,125,20),(100,99.8,10,10),(100,99.9,125,20)])
-def test_jev_leverage_is_dynamic_and_capped(strategy,requested,stop,exchange_max,expected):
+def test_leverage_is_dynamic_and_capped(strategy,requested,stop,exchange_max,expected):
     value=signal();value['leverage_requested']=requested;value['levels']['stop']=stop
     now=load(strategy,value)
     assert strategy.leverage(value['pair'],now,100,1,exchange_max,tag(value),'long')==expected
@@ -209,13 +209,13 @@ def test_unlimited_count_uses_numeric_stake_and_preserves_old_trade_plan(strateg
     strategy.wallets=SimpleNamespace(get_total_stake_amount=lambda:3000,get_available_stake_amount=lambda:75)
     strategy.bot_loop_start(datetime.now(timezone.utc))
     assert strategy.config['stake_amount']==75
-    trade=SimpleNamespace(id=7,enter_tag='jev:old:98:104',is_short=False,leverage=1,open_date_utc=datetime.now(timezone.utc))
+    trade=SimpleNamespace(id=7,enter_tag='rule:old:98:104',is_short=False,leverage=1,open_date_utc=datetime.now(timezone.utc))
     assert strategy.custom_stoploss('BTC/USDT:USDT',trade,datetime.now(timezone.utc),100,0)==pytest.approx(.02)
 
 
 def test_upgrade_restores_tighter_stop_after_freqtrade_reinitializes(strategy):
     now=datetime.now(timezone.utc)
-    trade=Trade(pair='BTC/USDT:USDT',exchange='binance',enter_tag='jev:old:90:120',
+    trade=Trade(pair='BTC/USDT:USDT',exchange='binance',enter_tag='rule:old:90:120',
                 open_rate=100,stake_amount=140,amount=1.4,is_open=True,open_date=now,
                 fee_open=.0005,fee_close=.0005,leverage=1,is_short=False,
                 stop_loss=95,initial_stop_loss=95,initial_stop_loss_pct=-.05,
@@ -279,7 +279,7 @@ def test_strategy_and_engine_share_daily_veto(strategy, tmp_path, monkeypatch):
 
 def test_short_stop_restored_once_and_then_read_from_trade(strategy):
     now=datetime.now(timezone.utc)
-    trade=Trade(pair='BTC/USDT:USDT',exchange='binance',enter_tag='jev:old:110:80',
+    trade=Trade(pair='BTC/USDT:USDT',exchange='binance',enter_tag='rule:old:110:80',
         open_rate=100,stake_amount=140,amount=1.4,is_open=True,open_date=now,
         fee_open=.0005,fee_close=.0005,leverage=1,is_short=True,
         stop_loss=105,initial_stop_loss=105,initial_stop_loss_pct=-.05,
@@ -308,7 +308,7 @@ def test_unchanged_plan_stop_does_not_creep_toward_price(strategy, short, open_r
     import random
     now=datetime.now(timezone.utc)
     stop, target = (plan, open_rate*.97) if short else (plan, open_rate*1.03)
-    trade=Trade(pair='LAB/USDT:USDT',exchange='binance',enter_tag=f'jev:{"b"*24}:{stop:.12g}:{target:.12g}:6',
+    trade=Trade(pair='LAB/USDT:USDT',exchange='binance',enter_tag=f'rule:{"b"*24}:{stop:.12g}:{target:.12g}:6',
                 open_rate=open_rate,stake_amount=140,amount=1000,is_open=True,open_date=now,
                 fee_open=.0005,fee_close=.0005,leverage=6,is_short=short,
                 price_precision=.00001 if open_rate < .1 else .0001,precision_mode_price=4)
@@ -323,20 +323,9 @@ def test_unchanged_plan_stop_does_not_creep_toward_price(strategy, short, open_r
     assert not trade.is_stop_loss_trailing
 
 
-def test_legacy_strategy_name_loads_new_executor_without_ai():
-    config = build_config(Settings(), 'x'*32, 'test', 'test-password')
-    config.update(strategy='JevBridgeStrategy',runmode=RunMode.DRY_RUN,
-                  user_data_dir=ROOT/'user_data',strategy_path=str(ROOT/'user_data/strategies'))
-    instance=StrategyResolver.load_strategy(config)
-    assert instance.__class__.__name__=='JevBridgeStrategy'
-    assert instance.__class__.__mro__[1].__name__=='SignalBridgeStrategy'
-
-
 @pytest.mark.parametrize('short',[False,True])
-def test_legacy_trade_tags_keep_stop_and_target(strategy,short):
+def test_unknown_trade_tag_is_closed_instead_of_guessing_a_plan(strategy,short):
     value=signal('SHORT' if short else 'LONG');now=load(strategy,value)
-    legacy=tag(value).replace('rule:','jev:',1)
-    trade=SimpleNamespace(id=7,enter_tag=legacy,is_short=short,leverage=1,open_date_utc=now)
-    assert strategy.custom_stoploss(value['pair'],trade,now,100,0)==pytest.approx(.02)
-    assert strategy.custom_exit(value['pair'],trade,now,value['levels']['stop'],0)=='risk_stop'
-    assert strategy.custom_exit(value['pair'],trade,now,value['levels']['target'],0)=='risk_target'
+    trade=SimpleNamespace(id=7,enter_tag=tag(value).replace('rule:','jev:',1),is_short=short,leverage=1,open_date_utc=now)
+    assert strategy.custom_stoploss(value['pair'],trade,now,100,0) is None
+    assert strategy.custom_exit(value['pair'],trade,now,100,0)=='missing_risk_plan'

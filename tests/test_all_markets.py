@@ -40,7 +40,7 @@ def test_discovery_refresh_and_recovery(tmp_path):
             async def snapshot(symbol): return demo_snapshot(symbol)
             async def ranking(symbols): return symbols
             engine.market.volume_ranking = ranking
-            async def heatmap(symbols): engine.heatmap.rows = {s: dict(rsi_15m=None, rsi_1h=60., rsi_4h=58.) for s in symbols}
+            async def heatmap(symbols): engine.heatmap.rows = {s: dict(rsi_1h=60., rsi_4h=58., macd_1h=.001, macd_4h=.002) for s in symbols}
             engine.heatmap.refresh = heatmap
             engine.market.discover_symbols = discover
             engine.market.snapshot = snapshot

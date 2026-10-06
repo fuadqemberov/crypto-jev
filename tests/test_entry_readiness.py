@@ -41,12 +41,12 @@ def test_dashboard_readiness_matches_bridge(tmp_path, gate, ready, code):
     visible = status['rows'][0]
     assert visible['execution_ready'] is ready
     assert status['actionable_count'] == int(ready)
-    assert visible['execution_action'] == ('SHORT' if ready else 'WAIT')
+    assert visible['execution_action'] == ('SHORT' if ready else None)
     if gate == 'levels':
         assert status['bridge']['rejections']['levels'] == 1
     elif code:
         assert code in visible['execution_blocks']
-    assert value['decision'] == 'SHORT'  # Status must not change JEV's analysis.
+    assert value['decision'] == 'SHORT'  # Status must not change the strategy's analysis.
     store.close()
 
 
@@ -61,11 +61,3 @@ def test_invalid_pair_is_not_sent_to_executor(tmp_path):
     assert payload['diagnostics']['rejections']['pair'] == 1
     assert not engine.status()['rows'][0]['execution_ready']
     store.close()
-
-
-
-
-def test_obsolete_leverage_threshold_is_ignored(monkeypatch):
-    monkeypatch.setattr('app.config.load_dotenv', lambda: None)
-    monkeypatch.setenv('MIN_LEVERAGE_CONFIDENCE', 'legacy-invalid-value')
-    assert Settings.load().risk.max_leverage == 20

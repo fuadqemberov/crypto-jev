@@ -89,7 +89,7 @@ def reset_paper(root: Path, data_dir: Path) -> Path | None:
     """Archive the Freqtrade trade database and restore the virtual wallet; executor must be stopped."""
     config_path = root / 'user_data' / 'config.paper.json'
     config = json.loads(config_path.read_text(encoding='utf-8'))
-    if config.get('dry_run') is not True or config.get('strategy') not in ('SignalBridgeStrategy', 'JevBridgeStrategy'):
+    if config.get('dry_run') is not True or config.get('strategy') != 'SignalBridgeStrategy':
         raise ValueError('Yalnız SignalBridgeStrategy dry-run konfiqurasiyası sıfırlana bilər.')
     db_url = config.get('db_url', '')
     if not db_url.startswith('sqlite:///'):

@@ -14,10 +14,10 @@ const assert = require('node:assert/strict');
    metrics:{scan_seconds:{radar:120,priority:3},symbol_p50_ms:220,symbol_p95_ms:800},cache:{hit_rate:.75},
    bridge:{health:'unavailable',blocks:['heartbeat'],rejections:{ttl:12,funding:3},executor_rejections:{spread:2}}};
   state.rows=[
-   {symbol:'BTCUSDT',decision:'SHORT',candidate:'SHORT',observed_at:Date.now(),execution_ready:false,execution_action:'WAIT',execution_blocks:['pause']},
+   {symbol:'BTCUSDT',decision:'SHORT',candidate:'SHORT',observed_at:Date.now(),execution_ready:false,execution_action:null,execution_blocks:['pause']},
    {symbol:'ETHUSDT',decision:'LONG',candidate:'LONG',observed_at:Date.now(),execution_ready:true,execution_action:'LONG',execution_blocks:[],planned_leverage:4}
   ];
-  state.market_symbols=['BTCUSDT','ETHUSDT'];state.market_count=2;state.actionable_count=1;
+  state.market_symbols=['BTCUSDT','ETHUSDT'];state.radar_symbols=['BTCUSDT','ETHUSDT'];state.market_count=2;state.actionable_count=1;
   let offline=false;
   await page.route('**/*',async route=>{
    const url=new URL(route.request().url());
@@ -29,7 +29,7 @@ const assert = require('node:assert/strict');
    return route.fulfill({contentType:name.endsWith('html')?'text/html':name.endsWith('js')?'application/javascript':'text/css',
     body:readFileSync(path.join(__dirname,'../app/static',name),'utf8')});
   });
-  await page.goto('http://jev.test/');
+  await page.goto('http://radar.test/');
   await page.waitForFunction(()=>document.getElementById('operations').textContent.includes('120'));
   assert.match(await page.locator('#bridge-blocks').innerText(),/Heartbeat yoxdur/);
   assert.match(await page.locator('#rejection-metrics').innerText(),/12/);
@@ -45,8 +45,8 @@ const assert = require('node:assert/strict');
   await page.locator('[data-filter="direction"]').click();
   assert.equal(await page.locator('#markets button').count(),2);
   await page.locator('#markets button[aria-label="BTCUSDT"]').click();
-  assert.equal(await page.locator('#decision').innerText(),'WAIT');
-  assert.equal(await page.locator('#decision-large').innerText(),'WAIT');
+  assert.equal(await page.locator('#decision').innerText(),'GİRİŞ YOX');
+  assert.equal(await page.locator('#decision-large').innerText(),'Girişlər dayandırılıb');
   assert.match(await page.locator('#decision-description').innerText(),/dayandırılıb/);
   mkdirSync('data' ,{recursive:true});
   await page.screenshot({path:'data/operations-desktop.png',fullPage:true});

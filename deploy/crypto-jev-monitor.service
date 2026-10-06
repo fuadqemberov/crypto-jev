@@ -1,5 +1,5 @@
 [Unit]
-Description=Check JEV engine and paper executor heartbeat
+Description=Check Crypto Radar engine and paper executor heartbeat
 After=crypto-jev.service crypto-jev-paper.service
 
 [Service]

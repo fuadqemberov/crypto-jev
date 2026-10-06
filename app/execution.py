@@ -46,7 +46,7 @@ class Execution:
         try:
             config, trades, profit, balance, history = await asyncio.gather(
                 *(get(path) for path in ('show_config', 'status', 'profit', 'balance', 'trades?limit=30')))
-            if config.get('dry_run') is not True or config.get('strategy') not in ('SignalBridgeStrategy', 'JevBridgeStrategy'):
+            if config.get('dry_run') is not True or config.get('strategy') != 'SignalBridgeStrategy':
                 raise ValueError('Only the paper bridge is accepted')
             if not isinstance(trades, list) or not isinstance(history.get('trades'), list):
                 raise ValueError('Invalid telemetry')
@@ -128,6 +128,14 @@ class Execution:
 
     def signals(self, rows: Iterable[dict[str, Any]], storage_error: bool = False,
                 external_blocks: tuple[str, ...] = ()) -> dict[str, Any]:
+        return self.evaluate(rows, storage_error, external_blocks)[0]
+
+    def evaluate(self, rows: Iterable[dict[str, Any]], storage_error: bool = False,
+                 external_blocks: tuple[str, ...] = ()) -> tuple[dict[str, Any], dict[str, list[str]]]:
+        """Bridge payload plus why each analysed pair has no entry (shown in the dashboard only).
+
+        The executor receives only signals it can act on: an entry or a position-bound exit.
+        """
         now = int(time.time()*1000)
         status = self.status()
         risk = status.get('executor_risk') or {}
@@ -140,6 +148,7 @@ class Execution:
                 blocks.append(code)
         enabled = not blocks
         result = []
+        why_not: dict[str, list[str]] = {}
         rejections = Counter()
         for row in rows:
             observed = row.get('observed_at', 0)
@@ -211,11 +220,13 @@ class Execution:
                 entry_blocks.append(error)
             if signal['action'] == 'WAIT' and not entry_blocks:
                 entry_blocks.append('levels')
-            signal['entry_blocks'] = sorted(set(entry_blocks))
-            result.append(signal)
+            why_not[signal['pair']] = sorted(set(entry_blocks))
+            if signal['action'] in ('LONG', 'SHORT') or 'close_trade_id' in signal:
+                result.append(signal)
         pairs = {s['pair'] for s in result if s['action'] in ('LONG','SHORT')}
         pairs.update(t['pair'] for t in status.get('positions', []) if t.get('pair'))
-        return dict(version=VERSION, mode='dry_run', generated_at=now, risk_policy=self.settings.risk.identity,
+        payload = dict(version=VERSION, mode='dry_run', generated_at=now, risk_policy=self.settings.risk.identity,
                     entries_enabled=enabled, signals=result, marks=self.marks, pairs=sorted(pairs), refresh_period=self.settings.bridge_poll_seconds,
                     diagnostics=dict(blocks=blocks, rejections=dict(rejections), health=status['bridge_health'],
                                      bridge_lag_ms=risk.get('bridge_lag_ms'), executor_rejections=risk.get('rejections', {})))
+        return payload, why_not

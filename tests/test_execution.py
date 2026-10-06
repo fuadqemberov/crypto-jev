@@ -63,11 +63,13 @@ def test_signals_stale_demo_errors_and_idempotent_identity(tmp_path):
     for key, value in [('observed_at', 0), ('observed_at', int(time.time()*1000)+10000), ('error', 'bad'), ('strategy', 'old')]:
         invalid = {**first, key: value}
         assert execution.signals([invalid])['signals'] == []
-    assert execution.signals([first], storage_error=True)['signals'][0]['action'] == 'WAIT'
+    # A pair without an entry or exit is not sent to the executor; its reason stays for the dashboard.
+    payload, why_not = execution.evaluate([first], storage_error=True)
+    assert payload['signals'] == [] and 'storage_error' in why_not['BTC/USDT:USDT']
     execution.snapshot['observed_at'] = 0
     assert not execution.signals([first])['entries_enabled']
     demo = Execution(Settings(demo=True), None, store); connected(demo)
-    assert demo.signals([first])['signals'][0]['action'] == 'WAIT'
+    assert demo.signals([first])['signals'] == [] and 'demo' in demo.evaluate([first])[1]['BTC/USDT:USDT']
     store.close()
 
 
@@ -79,7 +81,7 @@ def test_pause_vetoes_entries_not_position_bound_exits(tmp_path):
     signal = execution.signals([value])['signals'][0]
     assert signal['action'] == 'WAIT' and signal['close_trade_id'] == 7
     value['exit_action'] = 'HOLD'
-    assert 'close_trade_id' not in execution.signals([value])['signals'][0]
+    assert execution.signals([value])['signals'] == []
     store.close()
 
 
@@ -102,7 +104,7 @@ def test_telemetry_read_only_sanitized_and_fail_closed(tmp_path):
     async def run():
         paths=[]
         payloads = {
-            'show_config': {'dry_run': True, 'state': 'running', 'strategy': 'JevBridgeStrategy', 'secret': 'never-public'},
+            'show_config': {'dry_run': True, 'state': 'running', 'strategy': 'SignalBridgeStrategy', 'secret': 'never-public'},
             'status': [{'trade_id': 1, 'pair': 'BTC/USDT:USDT', 'is_short': False, 'secret': 'never-public'}],
             'profit': {'profit_closed_coin': 2, 'profit_all_coin': 3},
             'balance': {'currencies': [{'currency': 'USDT', 'balance': 2002, 'free': 1862, 'used': 140}]},
@@ -127,7 +129,7 @@ def test_telemetry_read_only_sanitized_and_fail_closed(tmp_path):
 
 
 def test_initializer_preserves_key_and_refuses_overwrite(tmp_path):
-    (tmp_path/'.env').write_text('TYPESAFE_API_KEY=keep-me\nSCAN_SECONDS=180\n', encoding='utf-8')
+    (tmp_path/'.env').write_text('CUSTOM_SETTING=keep-me\nSCAN_SECONDS=180\n', encoding='utf-8')
     path = initialize(tmp_path)
     import json
     config = json.loads(path.read_text())
@@ -135,7 +137,7 @@ def test_initializer_preserves_key_and_refuses_overwrite(tmp_path):
     assert config['exchange']['key'] == '' and config['force_entry_enable'] is False
     assert len(config['signal_bridge']['token']) >= 32
     assert 'keep-me' not in path.read_text()
-    assert 'TYPESAFE_API_KEY=keep-me' in (tmp_path/'.env').read_text()
+    assert 'CUSTOM_SETTING=keep-me' in (tmp_path/'.env').read_text()
     assert 'SCAN_SECONDS=180' in (tmp_path/'.env').read_text()
     before = path.read_text()
     with pytest.raises(FileExistsError): initialize(tmp_path)
@@ -198,7 +200,7 @@ def test_upgrade_preserves_local_credentials_symbols_and_database(tmp_path):
     with pytest.raises(ValueError): upgrade(tmp_path)
 
 
-def test_sizing_needs_no_ai_leverage_and_invalid_plan_does_not_block_exit(tmp_path):
+def test_sizing_from_risk_and_invalid_plan_does_not_block_exit(tmp_path):
     store=Store(tmp_path/'lev.db');execution=Execution(Settings(),None,store);connected(execution)
     value=row();value['position_id']=42
     value['exit_action']='CLOSE'
@@ -207,12 +209,9 @@ def test_sizing_needs_no_ai_leverage_and_invalid_plan_does_not_block_exit(tmp_pa
     assert signal['action']=='LONG' and signal['close_trade_id']==42
     assert signal['leverage_requested']==4
     assert execution.signals([value])['signals'][0]['leverage_requested']==4
-    value['levels']={'entry':100, 'stop':102, 'target':104, 'funding_cost':0.}
-    signal=execution.signals([value])['signals'][0]
-    assert signal['action']=='WAIT' and signal['close_trade_id']==42
-    assert signal['entry_blocks']==['levels']
-    value['levels']=None
-    signal=execution.signals([value])['signals'][0]
-    assert signal['action']=='WAIT' and signal['close_trade_id']==42
-    assert signal['entry_blocks']==['levels']
+    for levels in ({'entry':100, 'stop':102, 'target':104, 'funding_cost':0.}, None):
+        value['levels']=levels
+        payload,why_not=execution.evaluate([value]);signal=payload['signals'][0]
+        assert signal['action']=='WAIT' and signal['close_trade_id']==42
+        assert why_not['BTC/USDT:USDT']==['levels']
     store.close()

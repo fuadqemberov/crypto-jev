@@ -85,7 +85,7 @@ def test_thesis_exit_requires_two_closed_timeframes(short):
     assert evaluate(snap,Settings(),{'is_short':short})['exit_action']=='HOLD'
 
 
-def test_engine_runs_without_api_key_or_ai_network(tmp_path):
+def test_engine_runs_without_external_decision_api(tmp_path):
     async def run():
         class NoNetwork:
             async def get(self,*args,**kwargs):raise AssertionError('Unexpected HTTP')
@@ -96,25 +96,19 @@ def test_engine_runs_without_api_key_or_ai_network(tmp_path):
         engine.market.snapshot=market
         await engine.scan()
         assert engine.rows['BTCUSDT']['decision']=='LONG'
-        assert 'ai' not in engine.rows['BTCUSDT']
         assert store.history()[0]['strategy']==STRATEGY_ID
         assert not engine.signals()['entries_enabled'] # No execution telemetry.
         store.close()
     asyncio.run(run())
 
 
-def test_legacy_configuration_migration_preserves_db_and_credentials(tmp_path):
+def test_upgrade_refuses_unknown_strategy_config(tmp_path):
     config=build_config(Settings(),'x'*32,'test','secret')
     config['strategy']='JevBridgeStrategy'
-    config['jev_bridge']=config.pop('signal_bridge');config['jev_risk']=config.pop('risk_policy')
     root=tmp_path/'user_data';root.mkdir();target=root/'config.paper.json'
     target.write_text(json.dumps(config))
-    db=tmp_path/'paper.sqlite';db.write_bytes(b'unchanged')
-    upgrade(tmp_path);new=json.loads(target.read_text())
-    assert new['strategy']=='SignalBridgeStrategy' and 'jev_bridge' not in new
-    assert new['signal_bridge']==config['jev_bridge'] and new['api_server']==config['api_server']
-    assert new['db_url']==config['db_url'] and new['dry_run_wallet']==config['dry_run_wallet']
-    assert db.read_bytes()==b'unchanged'
+    with pytest.raises(ValueError):upgrade(tmp_path)
+    assert json.loads(target.read_text())==config
 
 
 def test_old_bridge_protocol_is_rejected():
@@ -122,13 +116,6 @@ def test_old_bridge_protocol_is_rejected():
                  generated_at=int(time.time()*1000),entries_enabled=True,signals=[])
     assert VERSION==4
     with pytest.raises(ValueError):validate_payload(payload,payload['generated_at'],Settings().risk.identity)
-
-
-def test_removed_environment_secrets_are_ignored(monkeypatch):
-    monkeypatch.setenv('TYPESAFE_API_KEY','must-not-be-read')
-    monkeypatch.setenv('MIN_AI_CONFIDENCE','not-a-number')
-    settings=Settings.load()
-    assert not hasattr(settings,'api_key') and not hasattr(settings,'min_confidence')
 
 
 @pytest.mark.parametrize('values',[{'stop_atr':0},{'target_r':float('nan')},{'min_relative_volume':True},

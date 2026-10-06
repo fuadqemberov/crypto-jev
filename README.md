@@ -1,9 +1,8 @@
 # Crypto Radar — paper trading
 
 Python 3.12+ və **Freqtrade 2026.8** ilə lokal, deterministik futures strategiyası.
-Repo adı geriyə uyğunluq üçün `crypto-jev` qalır. **JEV / TypeSafe çağırışları, model,
-API açarı, AI cavab cache-i və confidence qapıları çıxarılıb.** Qərar qaydaları
-`app/strategy.py` daxilindəki `trend-reclaim-v1` strategiyasındadır.
+Repo və servis adları (`crypto-jev`) server yollarına görə dəyişdirilmir; köhnə JEV/AI kodu
+tam silinib. Qərar qaydaları `app/strategy.py` daxilindəki `trend-reclaim-v1` strategiyasındadır.
 
 Bu strategiyanın gəlirliliyi sübut edilməyib. Testlər proqramın davranışını yoxlayır,
 gələcək qazancı yox. Real pul, exchange açarları və live rejim qadağandır.
@@ -23,14 +22,15 @@ LONG üçün bütün şərtlər tələb olunur; SHORT üçün simmetrik tərsi t
 5. ATR/qiymət 0.1–5%; mark qiyməti son bağlanışdan maksimum 0.5 ATR uzaqdadır.
 6. Spread, istiqamət üzrə funding, xərclər sonrası R:R və icra risk yoxlamaları keçir.
 
-Bu göstəricilər ehtimal və ya “90% confidence” deyil. Hər qayda keçdi/keçmədi kimi
+Bu göstəricilər ehtimal deyil. Hər qayda keçdi/keçmədi kimi
 Azərbaycan dilində göstərilir. Trend namizədi təkbaşına giriş deyil; **Hazır siqnal**
 yalnız bridge tərəfindən buraxılmış, təzə icra planını göstərir.
 
 Girişdə stop məsafəsi 2 × 15m ATR, target 2R-dir. Plan order tag-də saxlanır və
 hər analizdə yenidən dəyişdirilmir. Mövqe üçün 1h bağlanışı EMA50-ni əks istiqamətdə
 keçərsə və 15m MACD histogramı bunu təsdiqləyərsə `thesis_exit` yaranır.
-Məlumat çatmırsa yeni giriş WAIT, analitik çıxış HOLD olur. İcradakı stop/target
+Məlumat çatmırsa giriş olmur və dashboard səbəbi göstərir (məs. "Trend yoxdur"), analitik çıxış HOLD olur.
+Executor-a yalnız icra ediləcək siqnallar (giriş və ya mövqeyə bağlı çıxış) göndərilir. İcradakı stop/target
 və maksimum 4 saat saxlanma qaydası analitik çıxışdan müstəqildir.
 
 ## Arxitektura
@@ -57,7 +57,7 @@ və risk siyasətləri birlikdə işləməz: yeni girişlər bloklanır.
 
 - Planlanan stopda kapital risk büdcəsi 0.5%; hər mövqeyə maksimum 7% margin.
 - Marginin riskə gedən hissəsi maksimum 50%; leverage tavanı 20×.
-- Leverage AI və ya confidence əsasında deyil, stop məsafəsi və xərc büdcəsindən hesablanır.
+- Leverage stop məsafəsi və xərc büdcəsindən hesablanır.
 - Xalis R:R minimum 1.5; komissiya/slippage ehtiyatı və mənfi funding daxil edilir.
 - Gündəlik 3% zərər qapısı cari equity və günlük reallaşmış/reallaşmamış PnL istifadə edir.
 - Təkrar siqnal eyni şamda restartdan sonra da trade tarixçəsi ilə bloklanır.
@@ -81,7 +81,7 @@ python3.12 -m venv .venv
 cp .env.example .env
 ```
 
-`.env` faylında dashboard istifadəçi/parolunu birlikdə təyin edin. JEV açarı tələb edilmir.
+`.env` faylında dashboard istifadəçi/parolunu birlikdə təyin edin.
 
 ```bash
 .venv/bin/python -m app.paper
@@ -103,18 +103,16 @@ Dashboard yalnız loopback-da açılır. Uzaqdan SSH tuneli və ya autentifikasi
 reverse proxy istifadə edin; Freqtrade API-ni internetə açmayın. Windows üçün `run.cmd`
 və `run-paper.cmd` mövcuddur.
 
-### RSI heatmap radarı
+### RSI + MACD heatmap radarı
 
-`SYMBOLS=ALL` olanda bütün bazarlar artıq tam analiz edilmir (gecikmə yaradırdı). Hər radar dövründə
-[CoinGlass RSI Heatmap](https://www.coinglass.com/pro/i/RsiHeatMap) məntiqi ilə RSI 1h/4h hesablanır və
-yalnız hər iki periodda eyni tərəfdə güclü olan bazarlar seçilir: LONG üçün ikisi də ≥ `HEATMAP_TREND_RSI`
-(default 55), SHORT üçün ≤ 100−55. Güclüyə görə sıralanan ilk `HEATMAP_SIZE` (default 40) bazar və
-bütün açıq mövqelər tam analizə gedir; prioritet lane də bu siyahını izləyir. Strategiya qaydaları dəyişmir.
+`SYMBOLS=ALL` olanda bütün bazarlar tam analiz edilmir (gecikmə yaradırdı). Hər radar dövründə
+[CoinGlass RSI Heatmap](https://www.coinglass.com/pro/i/RsiHeatMap) məntiqi ilə Binance bağlanmış 1h
+şamlarından RSI və MACD(12,26,9) histogramı 1h və 4h üçün hesablanır (4h eyni şamlardan yığılır).
+Bazar yalnız hər dörd göstərici eyni tərəfdədirsə seçilir: LONG üçün RSI 1h/4h ≥ `HEATMAP_TREND_RSI`
+(default 55) və MACD histogramı 1h/4h > 0; SHORT tam əksi. RSI gücünə görə sıralanan ilk `HEATMAP_SIZE`
+(default 40) bazar və bütün açıq mövqelər tam analizə gedir; prioritet lane də bu siyahını izləyir.
 
-- `COINGLASS_API_KEY` verilibsə (CoinGlass API Standard planı və yuxarı) bir sorğu ilə
-  `/api/futures/rsi/list` oxunur; 15m RSI ifrat zonadadırsa bazar seçilmir.
-- Açar yoxdursa eyni heatmap Binance bağlanmış 1h şamlarından hesablanır (4h RSI eyni şamlardan yığılır).
-  İlk dövr ~1 dəqiqə (bir bazar = bir sorğu), sonra şamlar növbəti 1h bağlanışına qədər cache-dən gəlir.
+- Bir bazar = bir sorğu; ilk dövr ~1 dəqiqə, sonra şamlar növbəti 1h bağlanışına qədər cache-dən gəlir.
 - Heatmap alınmasa radar 24s həcmə görə ilk `HEATMAP_SIZE` bazarı seçir və UI xəbərdarlıq göstərir.
 - Dashboard-da "Heatmap radarı" filtri seçilmiş bazarları RSI 1h/4h ilə göstərir.
 
@@ -145,75 +143,38 @@ repo sahibi adından, `systemctl`-i root kimi işlədir. `pyproject.toml` və ya
 **Windows** — `run.cmd` / `run-paper.cmd` hər iki prosesi `python -m app.supervisor` altında işlədir;
 restart zamanı skript asılılıqları və konfiqurasiyanı yeniləyib yeni kodla yenidən başladır.
 
-## Mövcud quraşdırmadan miqrasiya
+## Serverdə yeniləmə
 
-**DB silmək və balansı sıfırlamaq lazım deyil.** `.env`, `data/analysis.db`,
-`data/freqtrade-paper.sqlite` və mövcud paper mövqeləri qorunur.
-Köhnə AI cache cədvəli varsa toxunulmur, amma artıq oxunmur/yazılmır.
-Tarixçədəki köhnə analizlər qalır, təkrar icraya buraxılmır.
-
-Serverinizdəki mövcud servis adları ilə əmrləri ardıcıl icra edin:
+UI-dan idarəetmə quraşdırılıbsa dashboard-da **Git pull** kifayətdir. Əl ilə:
 
 ```bash
 cd ~/crypto-jev
 ```
 
 ```bash
-sudo systemctl stop crypto-jev-freqtrade.service crypto-jev-dashboard.service
+git pull --ff-only
 ```
 
 ```bash
-git fetch origin
-```
-
-```bash
-git switch fix-stoploss-creep
-```
-
-```bash
-git pull --ff-only origin fix-stoploss-creep
-```
-
-```bash
-.venv/bin/python -m pip install -e '.[paper,test]'
+.venv/bin/python -m pip install -e '.[paper]'
 ```
 
 ```bash
 .venv/bin/python -m app.paper --upgrade
 ```
 
-Upgrade config-də strategiyanı `SignalBridgeStrategy`, bridge ayarlarını `signal_bridge`,
-risk ayarlarını `risk_policy` edir. Tokenlər, API hesabı, simvollar, wallet və DB yolu
-qorunur; yalnız config üçün mövcud atomik backup mexanizmi qalır. Əməliyyat bazası
-silinmir və kopyalanmır. Köhnə TYPESAFE_*, AI_CACHE_*, MIN_AI_CONFIDENCE və
-MIN_CLOSE_CONFIDENCE env açarları istifadə edilmir; onları `.env`-dən silə bilərsiniz.
-`RECENT_CONFIDENCE_SECONDS` yerinə `RECENT_SIGNAL_SECONDS` var, default 900.
-
 ```bash
-sudo systemctl start crypto-jev-dashboard.service
+sudo systemctl restart crypto-jev-dashboard.service crypto-jev-freqtrade.service
 ```
 
-```bash
-sudo systemctl start crypto-jev-freqtrade.service
-```
-
-```bash
-sudo systemctl status crypto-jev-dashboard.service crypto-jev-freqtrade.service --no-pager
-```
-
-```bash
-sudo journalctl -u crypto-jev-freqtrade.service -n 100 --no-pager
-```
-
-Hardcoded `--strategy JevBridgeStrategy` ilə köhnə servislər üçün kiçik uyğunluq
-sinfi saxlanıb: yeni lokal strategiyanı miras alır, heç bir AI kodu işləmir. Köhnə
-`jev:` order tag-ləri yalnız mövcud mövqelərin SL/TP-sini oxumaq üçün qəbul edilir;
-yeni tag-lər `rule:` ilə başlayır. Bu adlar xarici JEV asılılığı deyil.
-Bridge v3 prosesləri v4 ilə giriş aça bilməz; **hər iki prosesi yeniləyin**.
+Yalnız `SignalBridgeStrategy` konfiqurasiyası qəbul edilir. Köhnə `jev:` tag-lı açıq mövqe varsa
+SL/TP planı oxunmur və executor onu `missing_risk_plan` ilə bağlayır; bundan qaçmaq üçün
+yeniləmədən əvvəl köhnə mövqeləri bağlayın və ya "Bütün əməliyyatları sıfırla" düyməsini basın.
+Bridge protokolu dəyişəndə **hər iki prosesi yeniləyin**.
 
 ## Performans və konfiqurasiya
 
-JEV şəbəkə gözləməsi tam aradan qalxıb. Bir analiz bir market snapshot və lokal
+Bir analiz bir market snapshot və lokal
 indikator/qayda hesablamasıdır. Bağlanmış şamların feature cache-i saxlanır.
 Real şəbəkədə performans benchmarkı və gəlirlilik backtesti bu dəyişiklik üçün aparılmayıb.
 

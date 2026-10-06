@@ -4,7 +4,7 @@ let selected='BTCUSDT',state=null,interval='15m',marketFilter='heatmap',lastHist
 const fmt=(x,d=2)=>x==null||!Number.isFinite(Number(x))?'—':Number(x).toLocaleString('en-US',{maximumFractionDigits:d});
 const clock=x=>x?new Date(x).toLocaleTimeString('az-AZ',{timeZone:'Asia/Baku',hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—';
 function node(tag,text,cls){const n=document.createElement(tag);if(text!=null)n.textContent=text;if(cls)n.className=cls;return n;}
-function badge(value){return node('span',value,'badge '+(value==='WAIT'||value==='KÖHNƏ'?'wait':value==='SHORT'?'short':''));}
+function badge(value){return node('span',value,'badge '+(value==='LONG'?'':value==='SHORT'?'short':'wait'));}
 async function api(url,options){const r=await fetch(url,options);if(!r.ok){const d=await r.json().catch(()=>({}));throw Error(d.detail||`HTTP ${r.status}`);}return r.json();}
 function pnl(id,x){$(id).textContent=fmt(x);$(id).className=x==null?'':x>=0?'pass':'fail';}
 function emptyTable(id,cols,text){const tr=node('tr'),td=node('td',null,'empty-cell');td.colSpan=cols;td.append(node('span','▤','empty-icon'),node('span',text));tr.append(td);$(id).append(tr);}
@@ -27,11 +27,14 @@ function execution(data){
  for(const t of connected?data.trades||[]:[]){if(t.is_open)continue;const tr=node('tr');[t.pair,t.is_short?'SHORT':'LONG',fmt(t.open_rate,6),fmt(t.close_rate,6),fmt(t.close_profit_abs),fmt(t.funding_fees,4),t.exit_reason||'—'].forEach((v,i)=>tr.append(node('td',v,i===4?(t.close_profit_abs>=0?'pass':'fail'):'')));$('trades').append(tr);}
  if(!$('trades').children.length)emptyTable('trades',7,'Bağlanmış əməliyyat yoxdur');
 }
-function direction(row){return row.candidate||row.decision||'—';}
+function direction(row){return ['LONG','SHORT'].includes(row.candidate)?row.candidate:'—';}
+// Short "why no entry" label: the first failed strategy rule, otherwise the first execution block.
+const SHORT_REASON={trend:'Trend yoxdur',reclaim:'EMA20 reclaim yoxdur',momentum:'MACD təsdiqləmir',rsi:'RSI uyğun deyil',volume:'Həcm azdır',extension:'Qiymət uzaqlaşıb',volatility:'Volatillik uyğun deyil',price_gap:'Qiymət fərqi',spread:'Spread yüksəkdir',funding:'Funding',rr:'R:R aşağıdır',market_data:'Məlumat xətası',pause:'Girişlər dayandırılıb',cooldown:'Təkrar giriş fasiləsi',daily_loss:'Gündəlik zərər limiti',telemetry:'İcraçı offlayn',heartbeat:'İcraçı offlayn',ttl:'Analiz köhnədir',storage_error:'Disk xətası',demo:'Demo rejimi',levels:'Plan yoxdur',risk_error:'Risk ölçülmədi',analysis_error:'Analiz xətası',discovery:'Bazar siyahısı xətası',worker_error:'Skan xətası',schema:'Siqnal xətası'};
+function entryLabel(row){if(row.execution_ready)return row.execution_action;if(!row.observed_at)return 'Növbədə';if(row.stale)return 'Köhnə';const code=row.rejection_codes?.[0]||row.execution_blocks?.[0];return SHORT_REASON[code]||'Giriş yoxdur';}
 function executionReason(row){const labels={risk_error:'Risk ölçüləndirməsi mümkün deyil',ttl:'Siqnalın vaxtı keçib',telemetry:'İcra məlumatı yoxdur',heartbeat:'İcra heartbeat-i yoxdur',pause:'Yeni girişlər dayandırılıb',daily_loss:'Gündəlik zərər limiti',storage_error:'Disk xətası',schema:'Siqnal formatı etibarsızdır',cooldown:'Təkrar giriş fasiləsi',funding:'Funding yoxlaması keçilmədi',levels:'Giriş / SL / TP planı yoxdur',discovery:'Bazar siyahısı yenilənmədi',worker_error:'Skan xətası',demo:'Demo rejimi',analysis_error:'Analiz xətası'};return (row.execution_blocks||[]).map(c=>labels[c]||c).join(' · ');}
 function reason(row){if(row.error)return row.error;if(!row.observed_at)return 'Analiz növbəsində';if(row.stale)return `Yenilənmə növbəsində · ${Math.floor((row.analysis_age_seconds??(Date.now()-row.observed_at)/1000)/60)} dəq əvvəl`;return executionReason(row)||row.reasons?.[0]||'Bridge girişə buraxıb; Freqtrade yekun yoxlamanı edir';}
-function allRows(){const rows=new Map((state?.rows||[]).map(r=>[r.symbol,r]));for(const s of state?.market_symbols||[])if(!rows.has(s))rows.set(s,{symbol:s,decision:'WAIT'});return [...rows.values()];}
-function selectedRow(){return allRows().find(r=>r.symbol===selected)||{symbol:selected,decision:'WAIT'};}
+function allRows(){const rows=new Map((state?.rows||[]).map(r=>[r.symbol,r]));for(const s of state?.market_symbols||[])if(!rows.has(s))rows.set(s,{symbol:s});return [...rows.values()];}
+function selectedRow(){return allRows().find(r=>r.symbol===selected)||{symbol:selected};}
 function renderMarkets(){
  const query=$('market-search').value.trim().toUpperCase();let rows=allRows().filter(r=>r.symbol.includes(query));
  const heat=state?.heatmap?.rows||{},radar=new Set(state?.radar_symbols||[]);
@@ -39,14 +42,14 @@ function renderMarkets(){
  if(marketFilter==='ready')rows=rows.filter(r=>r.execution_ready===true);
  if(marketFilter==='direction')rows=rows.filter(r=>['LONG','SHORT'].includes(direction(r)));
  const rank=new Map((state?.radar_symbols||[]).map((s,i)=>[s,i]));rows.sort((a,b)=>marketFilter==='heatmap'?rank.get(a.symbol)-rank.get(b.symbol):a.symbol.localeCompare(b.symbol));const scroll=$('markets').scrollTop;$('markets').replaceChildren();
- for(const row of rows){const b=node('button',null,'market'+(row.symbol===selected?' active':''));b.setAttribute('aria-label',row.symbol);const left=node('span',row.symbol);left.append(node('small',`Namizəd ${direction(row)}`,direction(row)==='LONG'?'pass':direction(row)==='SHORT'?'fail':''));const h=heat[row.symbol];if(h)left.append(node('small',`RSI ${fmt(h.rsi_1h,0)} / ${fmt(h.rsi_4h,0)}${h.side?' · '+h.side:''}`,h.side==='LONG'?'pass':h.side==='SHORT'?'fail':'muted'));const right=node('span',fmt(row.mark,6),'market-right');const status=row.stale?'Yenilənir':!row.observed_at?'Növbədə':row.execution_action||'WAIT';right.append(node('small',status,status==='LONG'?'pass':status==='SHORT'?'fail':''));b.title=reason(row);b.append(left,right);b.onclick=()=>selectMarket(row.symbol);$('markets').append(b);}
+ for(const row of rows){const b=node('button',null,'market'+(row.symbol===selected?' active':''));b.setAttribute('aria-label',row.symbol);const left=node('span',row.symbol);left.append(node('small',`Namizəd ${direction(row)}`,direction(row)==='LONG'?'pass':direction(row)==='SHORT'?'fail':''));const h=heat[row.symbol];if(h)left.append(node('small',`RSI ${fmt(h.rsi_1h,0)} / ${fmt(h.rsi_4h,0)}${h.side?' · '+h.side:''}`,h.side==='LONG'?'pass':h.side==='SHORT'?'fail':'muted'));const right=node('span',fmt(row.mark,6),'market-right');const status=entryLabel(row);right.append(node('small',status,status==='LONG'?'pass':status==='SHORT'?'fail':''));b.title=reason(row);b.append(left,right);b.onclick=()=>selectMarket(row.symbol);$('markets').append(b);}
  if(!rows.length)$('markets').append(node('p','Uyğun bazar tapılmadı.','empty'));$('markets').scrollTop=scroll;$('visible-markets').textContent=`${rows.length} bazar`;
 }
 function selectMarket(symbol){selected=symbol;view=null;viewKey='';viewAt=0;renderMarkets();detail(selectedRow());clearBook('Yeni bazar yüklənir');drawChart([]);pollView();}
 function detail(row){
  $('symbol').textContent=row.symbol;$('rule-direction').textContent=direction(row);$('rule-direction').className=direction(row)==='LONG'?'pass':direction(row)==='SHORT'?'fail':'';
- $('decision').replaceWith(Object.assign(badge(row.stale?'KÖHNƏ':row.execution_action||'WAIT'),{id:'decision'}));
- $('decision-large').textContent=!row.observed_at?'Növbədə':row.stale?'KÖHNƏ':row.execution_action||'WAIT';$('decision-large').className=row.execution_action==='LONG'?'pass':row.execution_action==='SHORT'?'fail':'muted';$('decision-description').textContent=reason(row);
+ $('decision').replaceWith(Object.assign(badge(row.execution_ready?row.execution_action:'GİRİŞ YOX'),{id:'decision'}));
+ $('decision-large').textContent=entryLabel(row);$('decision-large').className=row.execution_action==='LONG'?'pass':row.execution_action==='SHORT'?'fail':'muted';$('decision-description').textContent=reason(row);
  $('indicators').replaceChildren();$('setup').replaceChildren();$('reasons').replaceChildren();$('rules').replaceChildren();$('levels').replaceChildren();
  for(const message of [...new Set([row.error,row.stale?'Analiz köhnədir; yeni giriş üçün təzə yoxlama gözlənilir.':null,executionReason(row),...(row.reasons||[])].filter(Boolean))])$('reasons').append(node('p',message));
  if(!$('reasons').children.length)$('reasons').append(node('p',row.observed_at?'Risk filtrləri keçilib. İcra cari qiyməti, balansı və təkrar girişləri ayrıca yoxlayır.':'Bu coin analiz növbəsindədir.'));
@@ -78,7 +81,7 @@ async function pollView(){
  catch(e){if(selected===symbol&&interval===tf){view=null;clearBook(e.message);$('quote-state').textContent='Canlı məlumat alınmadı';$('price').textContent='—';$('mark-price').textContent='—';$('funding').textContent='—';}}
  finally{viewBusy=false;}
 }
-async function history(){try{const rows=await api('/api/history');$('history').replaceChildren();for(const r of rows.slice(0,40)){const tr=node('tr');[clock(r.observed_at),r.symbol,direction(r),r.decision,r.error||r.reasons?.[0]||'Filtrlər keçildi'].forEach(v=>tr.append(node('td',v)));$('history').append(tr);}if(!rows.length)emptyTable('history',5,'Analiz tarixçəsi boşdur');}catch(e){$('notice').textContent=e.message;}}
+async function history(){try{const rows=await api('/api/history');$('history').replaceChildren();for(const r of rows.slice(0,40)){const tr=node('tr');[clock(r.observed_at),r.symbol,direction(r),['LONG','SHORT'].includes(r.decision)?r.decision:SHORT_REASON[r.rejection_codes?.[0]]||'Giriş yoxdur',r.error||r.reasons?.[0]||'Filtrlər keçildi'].forEach(v=>tr.append(node('td',v)));$('history').append(tr);}if(!rows.length)emptyTable('history',5,'Analiz tarixçəsi boşdur');}catch(e){$('notice').textContent=e.message;}}
 function renderOperations(){
  const m=state.metrics||{}, b=state.bridge||{};
  const labels={discovery:'Bazar siyahısı yenilənmədi',worker_error:'Skan prosesi xətası',trend:'Trend uyğun deyil',reclaim:'Yeni EMA20 keçidi yoxdur',momentum:'Momentum təsdiqi yoxdur',volume:'Həcm aşağıdır',extension:'Qiymət uzanıb',market_data:'Bazar məlumatı etibarsızdır',volatility:'Volatility limiti',price_gap:'Qiymət fərqi',rsi:'RSI limiti',telemetry:'İcra məlumatı yoxdur',heartbeat:'Heartbeat yoxdur',pause:'Girişlər dayandırılıb',storage_error:'Disk xətası',demo:'Demo rejimi',daily_loss:'Gündəlik zərər limiti',ttl:'Siqnal köhnəlib',analysis_error:'Analiz xətası',cooldown:'Təkrar giriş fasiləsi',funding:'Funding məlumatı yoxdur',rr:'R:R aşağıdır',spread:'Spread yüksəkdir',slippage:'Qiymət dəyişib',margin:'Margin limiti',duplicate:'Təkrar siqnal',risk_error:'Risk məlumatı yoxlanmadı',accepted:'Giriş təsdiqləndi',bridge:'Bridge xətası',schema:'Yanlış siqnal strukturu'};

@@ -1,5 +1,5 @@
 [Unit]
-Description=Check JEV paper heartbeat every 30 seconds
+Description=Check Crypto Radar paper heartbeat every 30 seconds
 
 [Timer]
 OnBootSec=60

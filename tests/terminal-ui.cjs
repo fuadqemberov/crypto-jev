@@ -9,6 +9,7 @@ const path = require('node:path');
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto('http://127.0.0.1:8082');
   await page.waitForFunction(()=>document.querySelectorAll('#bids .book-row').length===8,{timeout:60000});
+  await page.locator('[data-filter="all"]').click();  // Default filter shows only the heatmap radar.
   await page.waitForFunction(()=>document.querySelectorAll('#markets .market').length>100);
   assert.equal(await page.locator('#symbol').innerText(),'BTCUSDT');
   assert.equal(await page.locator('#chart .candle-up, #chart .candle-down').count()>100,true);
