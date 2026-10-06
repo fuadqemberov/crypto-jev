@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "crypto-jev"
 version = "0.3.0"
-description = "JEV-directed crypto analysis with a guarded Freqtrade paper executor"
+description = "Deterministic closed-candle crypto analysis with a guarded Freqtrade paper executor"
 requires-python = ">=3.12"
 dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "httpx[socks]>=0.27,<1", "python-dotenv>=1,<2"]
 

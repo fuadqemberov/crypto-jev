@@ -26,7 +26,7 @@ def execution_pairlists(token: str, poll: int = 1) -> list[dict[str, Any]]:
 def build_config(settings: Settings, token: str, username: str, password: str) -> dict[str, Any]:
     return {
         '$schema': 'https://schema.freqtrade.io/schema.json',
-        'strategy': 'JevBridgeStrategy', 'timeframe': '1m',
+        'strategy': 'SignalBridgeStrategy', 'timeframe': '1m',
         'dry_run': True, 'dry_run_wallet': 2000, 'fee': .0005,
         'trading_mode': 'futures', 'margin_mode': 'isolated',
         'max_open_trades': -1, 'stake_currency': 'USDT', 'stake_amount': 140,
@@ -48,11 +48,11 @@ def build_config(settings: Settings, token: str, username: str, password: str) -
                        'verbosity': 'error', 'enable_openapi': False, 'CORS_origins': [],
                        'username': username, 'password': password,
                        'jwt_secret_key': secrets.token_urlsafe(32), 'ws_token': secrets.token_urlsafe(32)},
-        'bot_name': 'Crypto Jev Paper', 'initial_state': 'running', 'force_entry_enable': False,
+        'bot_name': 'Crypto Radar Paper', 'initial_state': 'running', 'force_entry_enable': False,
         'internals': {'process_throttle_secs': settings.bridge_poll_seconds},
-        'jev_risk': asdict(settings.risk),
+        'risk_policy': asdict(settings.risk),
         'db_url': 'sqlite:///data/freqtrade-paper.sqlite',
-        'jev_bridge': {'url': 'http://127.0.0.1:8082', 'token': token},
+        'signal_bridge': {'url': 'http://127.0.0.1:8082', 'token': token},
     }
 
 
@@ -97,11 +97,14 @@ def upgrade(root: Path = Path('.')) -> Path:
     """Migrate only execution settings; preserve wallet DB, credentials and symbols."""
     target = root / 'user_data' / 'config.paper.json'
     config = json.loads(target.read_text(encoding='utf-8'))
-    if config.get('dry_run') is not True or config.get('strategy') != 'JevBridgeStrategy':
-        raise ValueError('Yalnız JevBridgeStrategy dry-run konfiqurasiyası yenilənə bilər.')
+    if config.get('dry_run') is not True or config.get('strategy') not in ('JevBridgeStrategy', 'SignalBridgeStrategy'):
+        raise ValueError('Yalnız paper bridge dry-run konfiqurasiyası yenilənə bilər.')
     settings = Settings.load()
-    changes = {'jev_risk': asdict(settings.risk), 'internals': {**config.get('internals', {}), 'process_throttle_secs': settings.bridge_poll_seconds}, 'max_open_trades': -1, 'stake_amount': 140, 'stoploss': -.50,
-               'pairlists': execution_pairlists(config['jev_bridge']['token'], settings.bridge_poll_seconds)}
+    bridge = config.get('signal_bridge', config.get('jev_bridge'))
+    if not isinstance(bridge, dict) or not isinstance(bridge.get('token'), str):
+        raise ValueError('Bridge configuration missing')
+    changes = {'strategy': 'SignalBridgeStrategy', 'signal_bridge': bridge, 'risk_policy': asdict(settings.risk), 'internals': {**config.get('internals', {}), 'process_throttle_secs': settings.bridge_poll_seconds}, 'max_open_trades': -1, 'stake_amount': 140, 'stoploss': -.50,
+               'pairlists': execution_pairlists(bridge['token'], settings.bridge_poll_seconds)}
     if all(config.get(k) == v for k, v in changes.items()):
         return target
     backup = target.with_name(target.name + '.backup-' + secrets.token_hex(4))
@@ -109,6 +112,8 @@ def upgrade(root: Path = Path('.')) -> Path:
     if os.name != 'nt':
         backup.chmod(0o600)
     config.update(changes)
+    config.pop('jev_bridge', None)
+    config.pop('jev_risk', None)
     # Atomic replacement: an interrupted upgrade leaves the original or complete new config.
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=target.parent,
                                      prefix='.config.paper.', suffix='.tmp', delete=False) as handle:

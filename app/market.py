@@ -124,7 +124,7 @@ class Market:
 
 
 def demo_snapshot(symbol: str) -> dict[str, Any]:
-    # Stable synthetic sample, explicitly labelled and never sent to Jev.
+    # Stable synthetic sample, explicitly labelled and never eligible for execution.
     now = int(time.time() * 1000)
     raw = {}
     base = {'BTCUSDT': 65000, 'ETHUSDT': 3000, 'SOLUSDT': 140, 'BNBUSDT': 550, 'XRPUSDT': .6}.get(symbol, 100)

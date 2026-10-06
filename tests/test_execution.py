@@ -13,22 +13,20 @@ from app.main import create_app
 from app.paper import initialize, build_config, upgrade
 from app.store import Store
 from app.engine import Engine
-from app.jev import Jev, JevError
 from app.market import demo_snapshot
-from test_analysis import answer
 
 
 def row(action='LONG'):
     return dict(symbol='BTCUSDT', observed_at=int(time.time()*1000), decision=action,
                 frames={'15m': {'close_time': 12345}},
                 levels={'entry': 100, 'stop': 98, 'target': 104, 'funding_cost': 0.},
-                ai={'answers': {'leverage': {'choice': '5', 'confidence': .95}}}, error=None, ai_error=None)
+                strategy='trend-reclaim-v1', candidate=action, error=None)
 
 
 def connected(execution):
     execution.snapshot = dict(connected=True, dry_run=True, state='running',
                              observed_at=int(time.time()*1000), positions=[])
-    execution.receive_heartbeat(dict(version=3, mode='dry_run', risk_policy=execution.settings.risk.identity,
+    execution.receive_heartbeat(dict(version=4, mode='dry_run', risk_policy=execution.settings.risk.identity,
         generated_at=int(time.time()*1000), risk_ready=True, daily_loss_hit=False, equity=2000.,
         realized_today=0., unrealized=0., cooldowns={}, rejections={}, bridge_lag_ms=0.))
 
@@ -43,12 +41,12 @@ def test_bridge_auth_pause_and_restart(tmp_path):
         assert c.get('/api/status', headers={'Authorization': 'Bearer '+'x'*32}).status_code == 401
         c.auth = ('user', 'pass')
         assert c.post('/api/execution/pause').status_code == 403
-        assert c.post('/api/execution/pause', headers={'X-Crypto-Jev': '1'}).json()['paused']
+        assert c.post('/api/execution/pause', headers={'X-Crypto-Radar': '1'}).json()['paused']
         assert app.state.engine.store.paused()
     with TestClient(create_app(s, start_worker=False)) as c:
         c.auth = ('user', 'pass')
         assert c.get('/api/status').json()['execution']['paused']
-        assert not c.post('/api/execution/resume', headers={'X-Crypto-Jev': '1'}).json()['paused']
+        assert not c.post('/api/execution/resume', headers={'X-Crypto-Radar': '1'}).json()['paused']
 
 
 def test_signals_stale_demo_errors_and_idempotent_identity(tmp_path):
@@ -62,7 +60,7 @@ def test_signals_stale_demo_errors_and_idempotent_identity(tmp_path):
     # Fresh timestamps cannot cause repeat entry within the same candle.
     time.sleep(.003)
     assert execution.signals([second])['signals'][0]['id'] == signal['id']
-    for key, value in [('observed_at', 0), ('observed_at', int(time.time()*1000)+10000), ('error', 'bad'), ('ai_error', 'bad')]:
+    for key, value in [('observed_at', 0), ('observed_at', int(time.time()*1000)+10000), ('error', 'bad'), ('strategy', 'old')]:
         invalid = {**first, key: value}
         assert execution.signals([invalid])['signals'] == []
     assert execution.signals([first], storage_error=True)['signals'][0]['action'] == 'WAIT'
@@ -77,10 +75,10 @@ def test_pause_vetoes_entries_not_position_bound_exits(tmp_path):
     store = Store(tmp_path/'exit.db'); store.set_paused(True)
     execution = Execution(Settings(), None, store); connected(execution)
     value = row(); value['position_id'] = 7
-    value['ai']['answers']['position_action'] = {'choice': 'CLOSE', 'confidence': .95}
+    value['exit_action'] = 'CLOSE'
     signal = execution.signals([value])['signals'][0]
     assert signal['action'] == 'WAIT' and signal['close_trade_id'] == 7
-    value['ai']['answers']['position_action']['confidence'] = .5
+    value['exit_action'] = 'HOLD'
     assert 'close_trade_id' not in execution.signals([value])['signals'][0]
     store.close()
 
@@ -135,7 +133,7 @@ def test_initializer_preserves_key_and_refuses_overwrite(tmp_path):
     config = json.loads(path.read_text())
     assert config['dry_run'] is True and config['dry_run_wallet'] == 2000
     assert config['exchange']['key'] == '' and config['force_entry_enable'] is False
-    assert len(config['jev_bridge']['token']) >= 32
+    assert len(config['signal_bridge']['token']) >= 32
     assert 'keep-me' not in path.read_text()
     assert 'TYPESAFE_API_KEY=keep-me' in (tmp_path/'.env').read_text()
     assert 'SCAN_SECONDS=180' in (tmp_path/'.env').read_text()
@@ -151,23 +149,6 @@ def test_bridge_config_rejects_invalid(values):
     with pytest.raises(ValueError): Settings(**values)
 
 
-def test_position_jev_contract_and_missing_answer_rejected():
-    async def run():
-        response=answer()
-        response['answers']['position_action']={'type':'choice','choice':'CLOSE','confidence':.95,
-                                               'probabilities':{'CLOSE':1.,'HOLD':0.}}
-        def handler(request):
-            import json
-            payload=json.loads(request.content)
-            assert 'position_action' in payload['questions']
-            return httpx.Response(200,json=response)
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            jev=Jev(client,Settings(api_key='test'))
-            result=await jev.evaluate({'position':{'trade_id':7}})
-            assert result['answers']['position_action']['choice']=='CLOSE'
-            del response['answers']['position_action']
-            with pytest.raises(JevError): await jev.evaluate({'position':{'trade_id':7}})
-    asyncio.run(run())
 
 
 def test_bounded_parallel_scan_and_disk_failure_veto(tmp_path):
@@ -207,9 +188,9 @@ def test_upgrade_preserves_local_credentials_symbols_and_database(tmp_path):
     new=json.loads(target.read_text())
     assert new['max_open_trades']==-1 and new['stake_amount']==140 and new['stoploss']==-.5
     assert new['pairlists'][0]['method'] == 'RemotePairList'
-    assert new['pairlists'][0]['bearer_token'] == new['jev_bridge']['token']
+    assert new['pairlists'][0]['bearer_token'] == new['signal_bridge']['token']
     assert new['exchange']==old['exchange'] and new['api_server']==old['api_server']
-    assert new['jev_bridge']==old['jev_bridge'] and database.read_bytes()==b'unchanged-db'
+    assert new['signal_bridge']==old['signal_bridge'] and database.read_bytes()==b'unchanged-db'
     backups=list(directory.glob('*.backup-*'));assert len(backups)==1
     assert json.loads(backups[0].read_text())==old
     upgrade(tmp_path);assert len(list(directory.glob('*.backup-*')))==1
@@ -220,12 +201,11 @@ def test_upgrade_preserves_local_credentials_symbols_and_database(tmp_path):
 def test_sizing_needs_no_ai_leverage_and_invalid_plan_does_not_block_exit(tmp_path):
     store=Store(tmp_path/'lev.db');execution=Execution(Settings(),None,store);connected(execution)
     value=row();value['position_id']=42
-    value['ai']['answers']={'position_action':{'choice':'CLOSE','confidence':.99}}
-    output=execution.signals([value]);assert output['version']==3
+    value['exit_action']='CLOSE'
+    output=execution.signals([value]);assert output['version']==4
     signal=output['signals'][0]
     assert signal['action']=='LONG' and signal['close_trade_id']==42
     assert signal['leverage_requested']==4
-    value['ai']['answers']['leverage']={'choice':'100','confidence':.01}
     assert execution.signals([value])['signals'][0]['leverage_requested']==4
     value['levels']={'entry':100, 'stop':102, 'target':104, 'funding_cost':0.}
     signal=execution.signals([value])['signals'][0]

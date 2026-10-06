@@ -10,9 +10,32 @@ from .risk import RiskPolicy, finite
 
 
 @dataclass(frozen=True)
+class EntryRules:
+    """Explicit market units; these are filters, not win probabilities."""
+    min_relative_volume: float = 1.0
+    max_extension_atr: float = 1.0
+    max_price_gap_atr: float = .5
+    min_atr_pct: float = .1
+    max_atr_pct: float = 5.0
+    rsi_long_max: float = 68.0
+    stop_atr: float = 2.0
+    target_r: float = 2.0
+
+    def __post_init__(self) -> None:
+        bounds = {'min_relative_volume': (.5, 5), 'max_extension_atr': (.1, 2),
+                  'max_price_gap_atr': (.05, 1), 'min_atr_pct': (.01, 2),
+                  'max_atr_pct': (.1, 5), 'rsi_long_max': (50, 75),
+                  'stop_atr': (1, 4), 'target_r': (1.5, 5)}
+        for key, (low, high) in bounds.items():
+            value = getattr(self, key)
+            if not finite(value) or not low <= value <= high:
+                raise ValueError(f'Invalid entry rule: {key}')
+        if self.min_atr_pct >= self.max_atr_pct:
+            raise ValueError('ATR range must be ordered')
+
+
+@dataclass(frozen=True)
 class Settings:
-    api_key: str = field(default='', repr=False)
-    model: str = 'jev-latest'
     symbols: tuple[str, ...] = ('BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT')
     scan_seconds: int = 300
     performance_profile: str = 'balanced'
@@ -20,15 +43,11 @@ class Settings:
     radar_parallelism: int | None = None
     priority_parallelism: int | None = None
     priority_size: int = 24
-    recent_confidence_seconds: int = 900
+    recent_signal_seconds: int = 900
     symbol_timeout: int = 35
-    ai_cache_size: int = 3000
-    ai_cache_ttl: int = 300
-    ai_cache_persistent: bool = False
-    close_confidence: float = .85
     bridge_poll_seconds: int = 1
     risk: RiskPolicy = field(default_factory=RiskPolicy)
-    min_confidence: float = .90
+    rules: EntryRules = field(default_factory=EntryRules)
     max_spread: float = 15
     max_funding: float = .0003
     data_dir: Path = Path('data')
@@ -49,22 +68,19 @@ class Settings:
             if getattr(self, name) is None:
                 object.__setattr__(self, name, value)
         for name, low, high in [('priority_seconds', 5, 60), ('radar_parallelism', 1, 16),
-                ('priority_parallelism', 1, 8), ('priority_size', 1, 200), ('recent_confidence_seconds', 60, 3600),
-                ('symbol_timeout', 5, 60), ('ai_cache_size', 1, 50000), ('ai_cache_ttl', 1, 900),
+                ('priority_parallelism', 1, 8), ('priority_size', 1, 200), ('recent_signal_seconds', 60, 3600),
                 ('bridge_poll_seconds', 1, 5), ('scan_seconds', 60, 86400), ('signal_ttl', 30, 300)]:
             value = getattr(self, name)
             if type(value) is not int or not low <= value <= high:
                 raise ValueError(f'Invalid setting: {name}')
         if self.priority_seconds + self.symbol_timeout >= self.signal_ttl:
             raise ValueError('Priority interval + analysis timeout must be below signal TTL')
-        if not finite(self.close_confidence) or not 0 <= self.close_confidence <= 1:
-            raise ValueError('Invalid close confidence threshold')
 
         if self.symbols != ('ALL',) and (not self.symbols or any(not re.fullmatch(r'[A-Z0-9]+USDT', s) for s in self.symbols)):
             raise ValueError('SYMBOLS: ALL və ya USDT simvolları tələb olunur.')
         if self.scan_seconds < 60:
             raise ValueError('SCAN_SECONDS >= 60 olmalıdır.')
-        if not all(finite(v) for v in (self.min_confidence, self.max_spread, self.max_funding)) or not 0 <= self.min_confidence <= 1 or not 0 < self.max_spread <= 100 or not 0 <= self.max_funding <= .01:
+        if not all(finite(v) for v in (self.max_spread, self.max_funding)) or not 0 < self.max_spread <= 100 or not 0 <= self.max_funding <= .01:
             raise ValueError('Risk parametrləri etibarsızdır.')
         if bool(self.user) != bool(self.password):
             raise ValueError('DASHBOARD_USER və DASHBOARD_PASSWORD birlikdə verilməlidir.')
@@ -82,17 +98,15 @@ class Settings:
     def load(cls) -> Settings:
         load_dotenv()
         optional_int = lambda key: int(os.environ[key]) if os.getenv(key) else None
-        return cls(api_key=os.getenv('TYPESAFE_API_KEY', ''), model=os.getenv('TYPESAFE_MODEL', 'jev-latest'),
+        return cls(rules=EntryRules(**{key: float(os.getenv('RULE_' + key.upper(), str(value)))
+                                      for key, value in vars(EntryRules()).items()}),
                    symbols=tuple(dict.fromkeys(s.strip().upper() for s in os.getenv('SYMBOLS', 'ALL').split(',') if s.strip())),
                    scan_seconds=int(os.getenv('SCAN_SECONDS', '300')),
                    performance_profile=os.getenv('PERFORMANCE_PROFILE', 'balanced'),
                    priority_seconds=optional_int('PRIORITY_SCAN_SECONDS'), radar_parallelism=optional_int('RADAR_PARALLELISM'),
                    priority_parallelism=optional_int('PRIORITY_PARALLELISM'), priority_size=int(os.getenv('PRIORITY_SIZE', '24')),
                    symbol_timeout=int(os.getenv('SYMBOL_TIMEOUT_SECONDS', '35')),
-                   recent_confidence_seconds=int(os.getenv('RECENT_CONFIDENCE_SECONDS', '900')),
-                   ai_cache_size=int(os.getenv('AI_CACHE_SIZE', '3000')), ai_cache_ttl=int(os.getenv('AI_CACHE_TTL_SECONDS', '300')),
-                   ai_cache_persistent=os.getenv('AI_CACHE_PERSISTENT', 'false').lower() == 'true',
-                   close_confidence=float(os.getenv('MIN_CLOSE_CONFIDENCE', '.85')),
+                   recent_signal_seconds=int(os.getenv('RECENT_SIGNAL_SECONDS', '900')),
                    bridge_poll_seconds=int(os.getenv('BRIDGE_POLL_SECONDS', '1')),
                    risk=RiskPolicy(capital_risk=float(os.getenv('CAPITAL_RISK', '.005')),
                        margin_fraction=float(os.getenv('MAX_MARGIN_FRACTION', '.07')),
@@ -104,7 +118,7 @@ class Settings:
                        cost_per_side=float(os.getenv('COST_PER_SIDE', '.0008')),
                        funding_periods=int(os.getenv('FUNDING_RESERVE_PERIODS', '1')),
                        cooldown_seconds=int(os.getenv('COOLDOWN_SECONDS', '300'))),
-                   min_confidence=float(os.getenv('MIN_AI_CONFIDENCE', '.90')), max_spread=float(os.getenv('MAX_SPREAD_BPS', '15')),
+                   max_spread=float(os.getenv('MAX_SPREAD_BPS', '15')),
                    max_funding=float(os.getenv('MAX_FUNDING_RATE', '.0003')), data_dir=Path(os.getenv('DATA_DIR', 'data')),
                    user=os.getenv('DASHBOARD_USER', ''), password=os.getenv('DASHBOARD_PASSWORD', ''),
                    demo=os.getenv('DEMO_MODE', 'false').lower() == 'true',

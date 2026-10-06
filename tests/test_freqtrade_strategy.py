@@ -64,7 +64,7 @@ def test_bridge_to_entry_and_risk_sizing(strategy, tmp_path, monkeypatch):
     value = signal()
     row = dict(symbol='BTCUSDT', observed_at=value['observed_at'], decision='LONG',
                levels={**value['levels'], 'funding_cost': 0.}, frames={'15m': {'close_time': 123}},
-               ai={'answers': {'leverage': {'choice': '1', 'confidence': .95}}},
+               strategy='trend-reclaim-v1',
                error=None, ai_error=None)
     payload = execution.signals([row])
     strategy.dp.current_whitelist = lambda: payload['pairs']
@@ -84,13 +84,13 @@ def test_bridge_to_entry_and_risk_sizing(strategy, tmp_path, monkeypatch):
 
 def load(strategy, value, enabled=True):
     now=datetime.now(timezone.utc)
-    strategy._accept(dict(version=3, risk_policy=strategy.policy.identity, mode='dry_run', generated_at=int(now.timestamp()*1000),
+    strategy._accept(dict(version=4, risk_policy=strategy.policy.identity, mode='dry_run', generated_at=int(now.timestamp()*1000),
                           entries_enabled=enabled, signals=[value]), now.timestamp()*1000)
     return now
 
 
 def tag(value):
-    return f"jev:{value['id']}:{value['levels']['stop']}:{value['levels']['target']}:{value['leverage_requested']}"
+    return f"rule:{value['id']}:{value['levels']['stop']}:{value['levels']['target']}:{value['leverage_requested']}"
 
 
 def test_real_framework_loads_config_and_dry_only(strategy):
@@ -131,12 +131,12 @@ def test_daily_loss_and_duplicate_persisted_trade(strategy, monkeypatch):
 
 
 @pytest.mark.parametrize('side', ['LONG', 'SHORT'])
-def test_stop_target_and_jev_exit_are_independent_of_entry_permission(strategy, side):
+def test_stop_target_and_thesis_exit_are_independent_of_entry_permission(strategy, side):
     value=signal(side); value['close_trade_id']=7
     now=load(strategy,value,enabled=False)
     trade=SimpleNamespace(id=7, enter_tag=tag(value), is_short=side=='SHORT', leverage=1, open_date_utc=now)
     assert strategy.custom_stoploss(value['pair'],trade,now,100,0) == pytest.approx(.02)
-    assert strategy.custom_exit(value['pair'],trade,now,100,0) == 'jev_close'
+    assert strategy.custom_exit(value['pair'],trade,now,100,0) == 'thesis_exit'
     trade.id=8
     assert strategy.custom_exit(value['pair'],trade,now,100,0) is None
     strategy.signals={}
@@ -321,3 +321,22 @@ def test_unchanged_plan_stop_does_not_creep_toward_price(strategy, short, open_r
         strategy.ft_stoploss_adjust(rate, trade, now, 0, 0)
     assert trade.stop_loss==placed==pytest.approx(plan, rel=3e-4)
     assert not trade.is_stop_loss_trailing
+
+
+def test_legacy_strategy_name_loads_new_executor_without_ai():
+    config = build_config(Settings(), 'x'*32, 'test', 'test-password')
+    config.update(strategy='JevBridgeStrategy',runmode=RunMode.DRY_RUN,
+                  user_data_dir=ROOT/'user_data',strategy_path=str(ROOT/'user_data/strategies'))
+    instance=StrategyResolver.load_strategy(config)
+    assert instance.__class__.__name__=='JevBridgeStrategy'
+    assert instance.__class__.__mro__[1].__name__=='SignalBridgeStrategy'
+
+
+@pytest.mark.parametrize('short',[False,True])
+def test_legacy_trade_tags_keep_stop_and_target(strategy,short):
+    value=signal('SHORT' if short else 'LONG');now=load(strategy,value)
+    legacy=tag(value).replace('rule:','jev:',1)
+    trade=SimpleNamespace(id=7,enter_tag=legacy,is_short=short,leverage=1,open_date_utc=now)
+    assert strategy.custom_stoploss(value['pair'],trade,now,100,0)==pytest.approx(.02)
+    assert strategy.custom_exit(value['pair'],trade,now,value['levels']['stop'],0)=='risk_stop'
+    assert strategy.custom_exit(value['pair'],trade,now,value['levels']['target'],0)=='risk_target'

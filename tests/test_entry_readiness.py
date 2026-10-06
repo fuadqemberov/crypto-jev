@@ -4,9 +4,7 @@ import pytest
 
 from app.config import Settings
 from app.engine import Engine
-from app.jev import QUESTIONS, PROMPT_VERSION, parse_response
 from app.store import Store
-from test_analysis import answer
 from test_execution import connected, row
 
 
@@ -24,7 +22,7 @@ def test_dashboard_readiness_matches_bridge(tmp_path, gate, ready, code):
     engine = Engine(Settings(), None, store)
     connected(engine.execution)
     value = row('SHORT')
-    value['ai'] = answer('SHORT')
+    value['candidate'] = 'SHORT'
     value['levels'] = dict(entry=100, stop=102, target=96, funding_cost=0.)
     if gate == 'risk_error':
         value['levels']['stop'] = 160
@@ -56,7 +54,7 @@ def test_invalid_pair_is_not_sent_to_executor(tmp_path):
     store = Store(tmp_path/'analysis.db')
     engine = Engine(Settings(), None, store)
     connected(engine.execution)
-    value = row(); value['ai'] = answer(); value['symbol'] = 'BAD-PAIRUSDT'
+    value = row(); value['candidate'] = 'LONG'; value['symbol'] = 'BAD-PAIRUSDT'
     engine.rows[value['symbol']] = value
     payload = engine.signals()
     assert payload['signals'] == [] and payload['pairs'] == []
@@ -65,10 +63,6 @@ def test_invalid_pair_is_not_sent_to_executor(tmp_path):
     store.close()
 
 
-def test_leverage_is_not_an_ai_question_and_cache_version_changes():
-    assert 'leverage' not in QUESTIONS
-    assert PROMPT_VERSION != '4'
-    assert 'leverage' not in parse_response(answer())['answers']
 
 
 def test_obsolete_leverage_threshold_is_ignored(monkeypatch):

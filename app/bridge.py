@@ -3,7 +3,7 @@ import re
 from typing import Any
 from .risk import finite
 
-VERSION = 3
+VERSION = 4
 MAX_AGE_MS = 15_000
 MAX_PAYLOAD_BYTES = 1_000_000
 PAIR = re.compile(r'^[A-Z0-9]+/USDT:USDT$')

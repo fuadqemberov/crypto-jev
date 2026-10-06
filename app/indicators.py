@@ -1,11 +1,12 @@
-"""Deterministic indicators. No AI arithmetic, no future bars."""
+"""Deterministic indicators. Closed candles only; no future bars."""
 import math
+from typing import Any
 from statistics import mean
 
 INTERVALS = {'15m': 900_000, '1h': 3_600_000, '4h': 14_400_000}
 
 
-def closed_bars(raw, interval, now):
+def closed_bars(raw: list[list[Any]], interval: str, now: int) -> list[dict[str, Any]]:
     step = INTERVALS[interval]
     bars = []
     for r in raw:
@@ -27,7 +28,7 @@ def closed_bars(raw, interval, now):
     return bars
 
 
-def ema(values, period):
+def ema(values: list[float], period: int) -> list[float | None]:
     # SMA seed; None until the full seed is available.
     out = [None] * (period - 1)
     value = mean(values[:period])
@@ -38,14 +39,14 @@ def ema(values, period):
     return out
 
 
-def wilder(values, period=14):
+def wilder(values: list[float], period: int = 14) -> float:
     value = mean(values[:period])
     for x in values[period:]:
         value = (value * (period - 1) + x) / period
     return value
 
 
-def features(bars):
+def features(bars: list[dict[str, Any]]) -> dict[str, Any]:
     c = [b['close'] for b in bars]
     e20, e50, e200 = [ema(c, p) for p in (20, 50, 200)]
     changes = [b - a for a, b in zip(c, c[1:])]
@@ -69,13 +70,12 @@ def features(bars):
     supports, resistances = [p for p in pivots_low if p < c[-1]], [p for p in pivots_high if p > c[-1]]
     avg_v = mean(b['volume'] for b in bars[-21:-1])
     trend = 'bullish' if c[-1] > e20[-1] > e50[-1] > e200[-1] else 'bearish' if c[-1] < e20[-1] < e50[-1] < e200[-1] else 'mixed'
-    result = dict(close=c[-1], close_time=bars[-1]['close_time'], ema20=e20[-1], ema50=e50[-1], ema200=e200[-1],
+    result = dict(previous_close=c[-2], previous_ema20=e20[-2], ema50_previous=e50[-2],
+                  close=c[-1], close_time=bars[-1]['close_time'], ema20=e20[-1], ema50=e50[-1], ema200=e200[-1],
                   rsi=rsi, atr=atr, atr_pct=atr / c[-1] * 100, macd=macd[-1], macd_signal=signal[-1],
                   macd_hist=hist, macd_change=hist - previous, relative_volume=bars[-1]['volume'] / avg_v if avg_v else 0,
                   support=max(supports) if supports else None, resistance=min(resistances) if resistances else None,
-                  trend=trend, momentum='bullish' if hist > 0 and hist > previous else 'bearish' if hist < 0 and hist < previous else 'mixed',
-                  volume_state='elevated' if avg_v and bars[-1]['volume'] >= 1.2 * avg_v else 'ordinary',
-                  rsi_state='overbought' if rsi > 70 else 'oversold' if rsi < 30 else 'neutral')
+                  trend=trend)
     if any(isinstance(x, float) and not math.isfinite(x) for x in result.values()):
         raise ValueError('İndikator hesablaması sonlu deyil.')
     return result

@@ -6,8 +6,6 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from app.bridge import VERSION, fresh, validate_payload, signal_error
-from app.cache import AnswerCache
-from app.jev import JevError
 from app.config import Settings
 from app.engine import Engine
 from app.execution import Execution
@@ -15,7 +13,6 @@ from app.main import create_app
 from app.market import demo_snapshot
 from app.risk import RiskPolicy
 from app.store import Store
-from test_analysis import answer
 from test_execution import connected, row
 
 
@@ -25,30 +22,8 @@ def heartbeat(settings):
         equity=2000., realized_today=0., unrealized=0., cooldowns={}, rejections={}, bridge_lag_ms=1.)
 
 
-def test_cache_lru_ttl_and_restart(tmp_path, monkeypatch):
-    now = time.time()
-    monkeypatch.setattr('app.cache.time.time', lambda: now)
-    store = Store(tmp_path/'cache.db')
-    cache = AnswerCache(2, 60, store)
-    cache.put('a', answer()); cache.put('b', answer())
-    cache.get('a'); cache.put('c', answer())
-    assert list(cache.items) == ['a', 'c'] and cache.evictions == 1
-    restarted = AnswerCache(2, 60, store)
-    assert restarted.get('c')['answers']['direction']['choice'] == 'LONG'
-    assert restarted.get('different-prompt-version') is None
-    now += 60
-    assert restarted.get('c') is None
-    now -= 120
-    assert cache.get('a') is None  # Future-created answers are rejected after clock rollback.
-    store.close()
 
 
-def test_corrupt_disk_cache_is_not_used(tmp_path):
-    store = Store(tmp_path/'cache.db')
-    store.cache_put('key', (time.time(), {'answers': {}}), 10, 300)
-    with pytest.raises(JevError):
-        AnswerCache(10, 300, store).get('key')
-    store.close()
 
 
 def test_heartbeat_auth_validation_and_expiry(tmp_path):
@@ -75,7 +50,7 @@ def test_storage_read_failure_blocks_entries_and_close(tmp_path):
     execution = Execution(Settings(), None, store)
     connected(execution)
     value = row(); value['position_id'] = 7
-    value['ai']['answers']['position_action'] = {'choice':'CLOSE', 'confidence':.99}
+    value['exit_action'] = 'CLOSE'
     store.close()
     payload = execution.signals([value])
     assert not payload['entries_enabled'] and 'storage_error' in payload['diagnostics']['blocks']
@@ -144,22 +119,6 @@ def test_same_symbol_is_single_flight_and_cancel_releases_slot(tmp_path):
     asyncio.run(run())
 
 
-def test_changed_context_vetoes_slow_ai(tmp_path):
-    async def run():
-        store = Store(tmp_path/'engine.db')
-        engine = Engine(Settings(api_key='test'), None, store)
-        original = demo_snapshot('BTCUSDT'); changed = deepcopy(original)
-        changed['frames']['15m']['close_time'] += 900000
-        snapshots = iter([original, changed])
-        async def snapshot(symbol): return next(snapshots)
-        async def evaluate(state): return answer()
-        engine.market.snapshot = snapshot; engine.jev.evaluate = evaluate
-        await engine._scan_symbol('BTCUSDT')
-        assert engine.rows['BTCUSDT']['decision'] == 'WAIT'
-        assert engine.rows['BTCUSDT']['ai'] is None
-        assert engine.metrics.counts['context_changed'] == 1
-        store.close()
-    asyncio.run(run())
 
 
 def test_open_positions_survive_watchlist_cap_and_recent_expires(tmp_path):
@@ -168,7 +127,7 @@ def test_open_positions_survive_watchlist_cap_and_recent_expires(tmp_path):
     engine.execution.snapshot['positions'] = [{'pair':'BTC/USDT:USDT'}, {'pair':'ETH/USDT:USDT'}]
     engine.top_volume = ('SOLUSDT','XRPUSDT')
     assert engine.priority_symbols() == ('BTCUSDT','ETHUSDT','SOLUSDT')
-    value = row(); value['symbol'] = 'DOGEUSDT'; value['ai'] = answer()
+    value = row(); value['symbol'] = 'DOGEUSDT'; value['candidate'] = 'LONG'
     engine.rows['DOGEUSDT'] = value
     assert engine.priority_symbols()[-1] == 'DOGEUSDT'
     value['observed_at'] = 0
@@ -183,11 +142,6 @@ def test_profile_coherence(profile, seconds, radar, priority, ttl):
     assert s.priority_seconds+s.symbol_timeout < s.signal_ttl
 
 
-@pytest.mark.parametrize('bad', [float('nan'), float('inf'), True, None, -1.])
-def test_pure_decision_rejects_invalid_confidence(bad):
-    from app.strategy import decide
-    ai=answer();ai['answers']['risk']['confidence']=bad
-    assert decide(dict(candidate='LONG',guards=[]),ai,Settings())[0]=='WAIT'
 
 
 def test_bulk_marks_forwarded_and_missing_mark_clears_all(tmp_path):
@@ -225,7 +179,7 @@ def test_priority_reserves_volume_slots(tmp_path):
     store=Store(tmp_path/'priority.db');engine=Engine(Settings(priority_size=2),None,store)
     engine.top_volume=('SOLUSDT',)
     for symbol in ('BTCUSDT','ETHUSDT'):
-        engine.rows[symbol]={**row(), 'symbol':symbol, 'ai':answer()}
+        engine.rows[symbol]={**row(), 'symbol':symbol, 'candidate':'LONG'}
     chosen=engine.priority_symbols()
     assert 'SOLUSDT' in chosen and len(chosen)==2
     store.close()

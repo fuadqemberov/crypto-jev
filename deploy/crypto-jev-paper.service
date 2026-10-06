@@ -1,5 +1,5 @@
 [Unit]
-Description=Crypto JEV Freqtrade paper executor
+Description=Crypto Radar Freqtrade paper executor
 Wants=network-online.target crypto-jev.service
 After=network-online.target crypto-jev.service
 StartLimitIntervalSec=120
@@ -9,7 +9,7 @@ StartLimitBurst=10
 Type=simple
 User=cryptojev
 WorkingDirectory=/opt/crypto-jev
-# Deliberately do not load .env: this process does not need the TypeSafe API key.
+# Executor uses only its generated paper config; no external decision API.
 ExecStart=/opt/crypto-jev/.venv/bin/python -m freqtrade trade --config /opt/crypto-jev/user_data/config.paper.json --strategy-path /opt/crypto-jev/user_data/strategies
 Restart=always
 RestartSec=3

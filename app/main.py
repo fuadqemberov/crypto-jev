@@ -41,7 +41,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
                             await task
                 store.close()
 
-    app = FastAPI(title='Crypto Jev', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title='Crypto Radar', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     basic = HTTPBasic(auto_error=False)
 
     @app.middleware('http')
@@ -61,7 +61,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
                 return JSONResponse({'detail': 'Giriş tələb olunur.'}, status_code=401, headers={'WWW-Authenticate': 'Basic'})
         if request.method == 'POST' and not bridge_request:
             # Browser cross-site form submissions cannot supply this custom header.
-            if request.headers.get('X-Crypto-Jev') != '1' or request.headers.get('Sec-Fetch-Site') == 'cross-site':
+            if request.headers.get('X-Crypto-Radar') != '1' or request.headers.get('Sec-Fetch-Site') == 'cross-site':
                 return JSONResponse({'detail': 'Sorğu mənbəyi qəbul edilmədi.'}, status_code=403)
         response = await call_next(request)
         response.headers['Cache-Control'] = 'no-store'

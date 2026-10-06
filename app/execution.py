@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 import httpx
 from .config import Settings
+from .strategy import STRATEGY_ID
 from .store import Store
 import asyncio
 import hashlib
@@ -45,7 +46,7 @@ class Execution:
         try:
             config, trades, profit, balance, history = await asyncio.gather(
                 *(get(path) for path in ('show_config', 'status', 'profit', 'balance', 'trades?limit=30')))
-            if config.get('dry_run') is not True or config.get('strategy') != 'JevBridgeStrategy':
+            if config.get('dry_run') is not True or config.get('strategy') not in ('SignalBridgeStrategy', 'JevBridgeStrategy'):
                 raise ValueError('Only the paper bridge is accepted')
             if not isinstance(trades, list) or not isinstance(history.get('trades'), list):
                 raise ValueError('Invalid telemetry')
@@ -93,7 +94,7 @@ class Execution:
             if not isinstance(pair, str) or not PAIR.fullmatch(pair) or not finite(until):
                 raise ValueError('Invalid cooldown')
         for key, count in value['rejections'].items():
-            if key not in {'bridge', 'ttl', 'confidence', 'pause', 'daily_loss', 'cooldown', 'duplicate',
+            if key not in {'bridge', 'ttl', 'pause', 'daily_loss', 'cooldown', 'duplicate',
                            'slippage', 'spread', 'rr', 'margin', 'telemetry', 'schema', 'risk_error', 'accepted'} or type(count) is not int or count < 0:
                 raise ValueError('Invalid rejection counter')
         lag = value.get('bridge_lag_ms')
@@ -142,12 +143,21 @@ class Execution:
         rejections = Counter()
         for row in rows:
             observed = row.get('observed_at', 0)
+            if not finite(observed):
+                rejections['schema'] += 1
+                continue
             expires = observed + self.settings.signal_ttl*1000
             if not observed <= now < expires:
                 rejections['ttl'] += 1
                 continue
-            if row.get('error') or row.get('ai_error') or not row.get('ai'):
+            if row.get('error') or row.get('strategy') != STRATEGY_ID:
                 rejections['analysis_error'] += 1
+                continue
+            frames = row.get('frames')
+            frame = frames.get('15m') if isinstance(frames, dict) else None
+            if (not isinstance(frame, dict) or not finite(frame.get('close_time'))
+                    or not isinstance(row.get('symbol'), str) or row.get('decision') not in ('LONG', 'SHORT', 'WAIT')):
+                rejections['schema'] += 1
                 continue
             symbol, decision = row['symbol'], row['decision']
             if decision == 'WAIT':
@@ -171,7 +181,7 @@ class Execution:
                     rejections['funding'] += 1
                 else:
                     policy = self.settings.risk
-                    # Python sizes an already approved JEV direction; confidence is not a sizing input.
+                    # Size the rule-approved direction from the stop and cost budget.
                     try:
                         loss = loss_fraction(levels['entry'], levels['stop'], levels['funding_cost'], policy)
                         planned = choose_leverage(loss, policy.max_leverage, policy.max_leverage, policy)
@@ -185,18 +195,16 @@ class Execution:
                     else:
                         entry_blocks.append('risk_error')
                         rejections['risk_error'] += 1
-            close = row['ai']['answers'].get('position_action', {})
-            # Pause/daily entry guards never disable a fresh, position-bound JEV exit.
+            # Entry pauses do not disable fresh, position-bound thesis exits.
             if (status['connected'] and not storage_error and not external_blocks and status['storage_ok'] and not self.settings.demo
-                    and close.get('choice') == 'CLOSE' and finite(close.get('confidence'))
-                    and close['confidence'] >= self.settings.close_confidence and type(row.get('position_id')) is int):
+                    and row.get('exit_action') == 'CLOSE' and type(row.get('position_id')) is int):
                 signal.update(close_trade_id=row['position_id'])
             error = signal_error(signal, now)
             if error:
                 rejections[error] += 1
                 if error != 'levels':
                     continue
-                # An invalid entry plan must not erase an independently valid JEV exit.
+                # An invalid entry plan must not erase an independently valid thesis exit.
                 signal.update(action='WAIT', levels=None)
                 signal.pop('leverage_requested', None)
                 signal.pop('funding_cost', None)
