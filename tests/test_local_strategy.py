@@ -14,7 +14,8 @@ from app.bridge import VERSION, validate_payload
 
 def snapshot(sign=1):
     now=int(time.time()*1000)
-    frame=dict(close=100., previous_close=100.-sign, previous_ema20=100.,
+    frame=dict(open=100.-.3*sign, high=100.6, low=99.4,
+               previous_high=101., previous_low=99., close=100., previous_close=100.-sign, previous_ema20=100.,
                ema20=100.-.5*sign, ema50=100.-2*sign, ema200=100.-3*sign,
                ema50_previous=100.-2.1*sign,
                atr=2., atr_pct=2., rsi=55. if sign==1 else 45.,
@@ -35,8 +36,8 @@ def test_symmetric_entries_and_fixed_geometry(sign,direction):
 
 
 @pytest.mark.parametrize('field,bad,code',[
-    ('previous_close',101.,'reclaim'),('macd_hist',-.1,'momentum'),
-    ('macd_change',-.01,'momentum'),('rsi',75.,'rsi'),('relative_volume',.9,'volume'),
+    ('macd_hist',-.1,'momentum'),
+    ('rsi',75.,'rsi'),('relative_volume',.6,'volume'),
     ('atr_pct',6.,'volatility'),('ema20',97.,'extension')])
 def test_each_entry_gate_is_effective(field,bad,code):
     snap=snapshot();snap['frames']['15m'][field]=bad
@@ -49,6 +50,23 @@ def test_each_entry_gate_is_effective(field,bad,code):
 def test_no_signal_without_higher_timeframe_alignment(sign):
     snap=snapshot(sign);snap['frames']['4h']['ema50_previous']=snap['frames']['4h']['ema50']
     assert 'trend' in evaluate(snap,Settings())['rejection_codes']
+
+
+def test_ema_pullback_does_not_need_exact_single_candle_reclaim():
+    snap=snapshot(1)
+    snap['frames']['15m']['previous_close']=101.
+    result=evaluate(snap,Settings())
+    assert result['decision']=='LONG' and result['setup']=='pullback'
+
+
+def test_breakout_needs_stronger_volume_and_momentum():
+    snap=snapshot(1);frame=snap['frames']['15m']
+    frame.update(open=100.2,low=99.9,atr=1.5,previous_close=101.,
+                 previous_high=99.9,close=100.,relative_volume=.8)
+    result=evaluate(snap,Settings())
+    assert result['decision']=='WAIT' and 'volume' in result['rejection_codes']
+    frame['relative_volume']=1.2;frame['macd_change']=-.01
+    assert 'momentum' in evaluate(snap,Settings())['rejection_codes']
 
 
 @pytest.mark.parametrize('bad',[None,True,float('nan'),float('inf'),'100'])
@@ -76,6 +94,8 @@ def test_missing_or_stale_inputs_do_not_create_decisions(mutation):
 def test_thesis_exit_requires_two_closed_timeframes(short):
     snap=snapshot(-1 if short else 1);held=-1 if short else 1
     snap['frames']['1h']['close']=snap['frames']['1h']['ema50']-held
+    snap['frames']['1h'].update(open=snap['frames']['1h']['close'],
+        high=snap['frames']['1h']['close']+.1,low=snap['frames']['1h']['close']-.1)
     assert evaluate(snap,Settings(),{'is_short':short})['exit_action']=='HOLD'
     snap['frames']['15m']['macd_hist']=-held*.1
     result=evaluate(snap,Settings(),{'is_short':short})

@@ -1,4 +1,4 @@
-"""Versioned, deterministic closed-candle trend/reclaim rules. No model or probability gates."""
+"""Versioned, deterministic closed-candle trend and continuation rules."""
 from __future__ import annotations
 import time
 from typing import Any
@@ -6,12 +6,12 @@ from .config import Settings, EntryRules
 from .indicators import INTERVALS
 from .risk import RiskPolicy, adverse_funding, net_rr, finite
 
-STRATEGY_ID = 'trend-reclaim-v1'
+STRATEGY_ID = 'trend-continuation-v2'
 
 
 def evaluate(snapshot: dict[str, Any], settings: Settings,
              position: dict[str, Any] | None = None, *, now: int | None = None) -> dict[str, Any]:
-    """Require a fresh EMA20 reclaim in the direction of the 1h/4h trend.
+    """Require aligned higher-timeframe trend and a 15m reclaim, pullback or breakout.
 
     Missing, nonfinite, stale, or inconsistent inputs invalidate entries AND discretionary
     exits. Executor-side fixed stops, targets and maximum hold remain independent.
@@ -30,35 +30,47 @@ def evaluate(snapshot: dict[str, Any], settings: Settings,
         frames = snapshot['frames']
         for tf, step in INTERVALS.items():
             f = frames[tf]
-            required = ('close', 'previous_close', 'previous_ema20', 'ema20', 'ema50', 'ema200',
+            required = ('open', 'high', 'low', 'previous_high', 'previous_low', 'close', 'previous_close', 'previous_ema20', 'ema20', 'ema50', 'ema200',
                         'ema50_previous', 'atr', 'atr_pct',
                         'rsi', 'macd_hist', 'macd_change', 'relative_volume', 'close_time')
             if not all(finite(f[k]) for k in required):
                 return invalid
-            if (min(f[k] for k in ('close', 'previous_close', 'previous_ema20', 'ema20', 'ema50', 'ema200', 'atr')) <= 0
+            if (min(f[k] for k in ('open', 'high', 'low', 'previous_high', 'previous_low', 'close', 'previous_close', 'previous_ema20', 'ema20', 'ema50', 'ema200', 'atr')) <= 0
                     or not 0 <= f['rsi'] <= 100 or f['relative_volume'] < 0
                     or not 0 < now-f['close_time'] <= step+30000):
                 return invalid
+            if (f['low'] > min(f['open'], f['close']) or f['high'] < max(f['open'], f['close'])
+                    or f['high'] < f['low'] or f['previous_high'] < f['previous_low']):
+                return invalid
         f, hourly, slow = (frames[t] for t in ('15m', '1h', '4h'))
-        def trend(frame: dict[str, Any], sign: int) -> bool:
-            return (sign*(frame['close']-frame['ema20']) > 0
-                    and sign*(frame['ema20']-frame['ema50']) > 0
-                    and sign*(frame['ema50']-frame['ema200']) > 0
-                    and sign*(frame['ema50']-frame['ema50_previous']) > 0)
-        sign = 1 if trend(hourly, 1) and trend(slow, 1) else -1 if trend(hourly, -1) and trend(slow, -1) else 0
+        def trend(frame: dict[str, Any], sign: int, *, confirm_fast: bool = False) -> bool:
+            # Long-term EMA200 ordering often lags a genuine trend reversal by days.
+            # Keep the 4h EMA50 slope and price regime, and confirm 1h with EMA20.
+            return (sign*(frame['close']-frame['ema50']) > 0
+                    and sign*(frame['ema50']-frame['ema50_previous']) > 0
+                    and (not confirm_fast or sign*(frame['ema20']-frame['ema50']) > 0))
+        sign = 1 if trend(hourly, 1, confirm_fast=True) and trend(slow, 1) else -1 if trend(hourly, -1, confirm_fast=True) and trend(slow, -1) else 0
         candidate = 'LONG' if sign == 1 else 'SHORT' if sign == -1 else 'WAIT'
         rules = settings.rules
         guards: list[dict[str, Any]] = []
         def guard(code: str, label: str, passed: bool) -> None:
             guards.append(dict(code=code, label=label, passed=bool(passed)))
-        guard('trend', '1h və 4h trend və EMA50 meyli eyni istiqamətdədir', sign != 0)
-        guard('reclaim', '15m bağlanışı EMA20-ni trend istiqamətində yeni keçib',
-              sign*(f['previous_close']-f['previous_ema20']) <= 0 and sign*(f['close']-f['ema20']) > 0)
-        guard('momentum', 'MACD histogramı və dəyişməsi trendi təsdiqləyir',
-              sign*f['macd_hist'] > 0 and sign*f['macd_change'] > 0)
-        guard('rsi', 'RSI trendi təsdiqləyir, həddən artıq deyil',
-              50 <= f['rsi'] <= rules.rsi_long_max if sign == 1 else 100-rules.rsi_long_max <= f['rsi'] <= 50 if sign == -1 else False)
-        guard('volume', f'Həcm / əvvəlki 20 şam ≥ {rules.min_relative_volume}', f['relative_volume'] >= rules.min_relative_volume)
+        guard('trend', '1s və 4s trend rejimi və EMA50 meyli eyni istiqamətdədir', sign != 0)
+        reclaim = sign*(f['previous_close']-f['previous_ema20']) <= 0 and sign*(f['close']-f['ema20']) > 0
+        pullback = (sign*(f['close']-f['ema20']) > 0 and sign*(f['close']-f['open']) > 0
+                    and sign*(f['low']-f['ema20']) <= .25*f['atr'] if sign == 1 else
+                    sign*(f['close']-f['ema20']) > 0 and sign*(f['close']-f['open']) > 0
+                    and sign*(f['high']-f['ema20']) <= .25*f['atr'])
+        breakout = (sign*(f['close']-(f['previous_high'] if sign == 1 else f['previous_low'])) > 0)
+        setup = 'reclaim' if reclaim else 'pullback' if pullback else 'breakout' if breakout else 'none'
+        guard('setup', '15d reclaim, təsdiqli EMA20 pullback və ya 20 şam breakout', setup != 'none')
+        momentum_ok = sign*f['macd_hist'] > 0 and (setup != 'breakout' or sign*f['macd_change'] > 0)
+        guard('momentum', 'MACD histogramı trend istiqamətindədir; breakout-da güclənir', momentum_ok)
+        rsi_low = 45 if sign == 1 else 100-rules.rsi_long_max
+        rsi_high = rules.rsi_long_max if sign == 1 else 55
+        guard('rsi', 'RSI trendi təsdiqləyir, həddən artıq deyil', rsi_low <= f['rsi'] <= rsi_high if sign else False)
+        volume_floor = max(rules.min_relative_volume, 1.0) if setup == 'breakout' else rules.min_relative_volume
+        guard('volume', f'Həcm / əvvəlki 20 şam ≥ {volume_floor:g}', f['relative_volume'] >= volume_floor)
         guard('extension', f'EMA20-dən uzaqlıq ≤ {rules.max_extension_atr} ATR', abs(f['close']-f['ema20']) <= rules.max_extension_atr*f['atr'])
         guard('volatility', f'ATR / qiymət {rules.min_atr_pct}–{rules.max_atr_pct}%', rules.min_atr_pct <= f['atr_pct'] <= rules.max_atr_pct)
         guard('price_gap', f'Cari qiymət bağlanmış şamdan ≤ {rules.max_price_gap_atr} ATR', abs(snapshot['mark']-f['close']) <= rules.max_price_gap_atr*f['atr'])
@@ -74,7 +86,7 @@ def evaluate(snapshot: dict[str, Any], settings: Settings,
             held_sign = -1 if position['is_short'] else 1
             if held_sign*(hourly['close']-hourly['ema50']) < 0 and held_sign*f['macd_hist'] < 0:
                 exit_action = 'CLOSE'
-        return dict(strategy=STRATEGY_ID, candidate=candidate, decision='WAIT' if failed else candidate,
+        return dict(strategy=STRATEGY_ID, candidate=candidate, setup=setup, decision='WAIT' if failed else candidate,
                     exit_action=exit_action, guards=guards, levels=None if failed else levels,
                     reasons=[g['label'] for g in failed], rejection_codes=[g['code'] for g in failed])
     except (KeyError, TypeError, ValueError, OverflowError):

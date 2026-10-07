@@ -20,7 +20,7 @@ def row(action='LONG'):
     return dict(symbol='BTCUSDT', observed_at=int(time.time()*1000), decision=action,
                 frames={'15m': {'close_time': 12345}},
                 levels={'entry': 100, 'stop': 98, 'target': 104, 'funding_cost': 0.},
-                strategy='trend-reclaim-v1', candidate=action, error=None)
+                strategy='trend-continuation-v2', candidate=action, error=None)
 
 
 def connected(execution):

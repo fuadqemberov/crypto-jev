@@ -70,7 +70,11 @@ def features(bars: list[dict[str, Any]]) -> dict[str, Any]:
     supports, resistances = [p for p in pivots_low if p < c[-1]], [p for p in pivots_high if p > c[-1]]
     avg_v = mean(b['volume'] for b in bars[-21:-1])
     trend = 'bullish' if c[-1] > e20[-1] > e50[-1] > e200[-1] else 'bearish' if c[-1] < e20[-1] < e50[-1] < e200[-1] else 'mixed'
-    result = dict(previous_close=c[-2], previous_ema20=e20[-2], ema50_previous=e50[-2],
+    # Prior range excludes the current candle to keep breakout checks causal.
+    result = dict(open=bars[-1]['open'], high=bars[-1]['high'], low=bars[-1]['low'],
+                  previous_close=c[-2], previous_ema20=e20[-2], ema50_previous=e50[-2],
+                  previous_high=max(b['high'] for b in bars[-21:-1]),
+                  previous_low=min(b['low'] for b in bars[-21:-1]),
                   close=c[-1], close_time=bars[-1]['close_time'], ema20=e20[-1], ema50=e50[-1], ema200=e200[-1],
                   rsi=rsi, atr=atr, atr_pct=atr / c[-1] * 100, macd=macd[-1], macd_signal=signal[-1],
                   macd_hist=hist, macd_change=hist - previous, relative_volume=bars[-1]['volume'] / avg_v if avg_v else 0,

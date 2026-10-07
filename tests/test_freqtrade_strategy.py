@@ -64,7 +64,7 @@ def test_bridge_to_entry_and_risk_sizing(strategy, tmp_path, monkeypatch):
     value = signal()
     row = dict(symbol='BTCUSDT', observed_at=value['observed_at'], decision='LONG',
                levels={**value['levels'], 'funding_cost': 0.}, frames={'15m': {'close_time': 123}},
-               strategy='trend-reclaim-v1',
+               strategy='trend-continuation-v2',
                error=None)
     payload = execution.signals([row])
     strategy.dp.current_whitelist = lambda: payload['pairs']

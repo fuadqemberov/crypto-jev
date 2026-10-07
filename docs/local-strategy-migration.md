@@ -6,7 +6,7 @@ Azerbaijani UI, and the two-process boundary remain.
 
 ## File-level changes
 
-- `app/strategy.py`: original versioned trend/reclaim evaluator; all gates explicit;
+- `app/strategy.py`: versioned trend-continuation evaluator with reclaim, pullback and breakout setups; all gates explicit;
   position-bound trend invalidation exits; finite/fresh input validation.
 - `app/indicators.py`: previous close/EMA and EMA50 slope inputs from closed bars only.
 - `app/config.py`: remove API/model/confidence/cache settings; validate `EntryRules`.
@@ -28,7 +28,7 @@ Azerbaijani UI, and the two-process boundary remain.
 
 ## Safety semantics
 
-Trend candidates are NOT executable signals. A 15m reclaim with all gates passes to
+Trend candidates are NOT executable signals. A 15m reclaim, confirmed pullback, or 20-candle breakout with all strategy gates passes to
 bridge checks, then Freqtrade confirms funding-adjusted risk, spread, slippage, daily
 loss, cooldown and duplicate history. Risk sizing still caps planned capital loss at
 0.5% and margin at 7%, subject to costs and exchange minimums. Stops are fixed entry

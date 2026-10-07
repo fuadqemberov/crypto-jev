@@ -2,7 +2,7 @@
 
 Python 3.12+ və **Freqtrade 2026.8** ilə lokal, deterministik futures strategiyası.
 Repo və servis adları (`crypto-jev`) server yollarına görə dəyişdirilmir; köhnə JEV/AI kodu
-tam silinib. Qərar qaydaları `app/strategy.py` daxilindəki `trend-reclaim-v1` strategiyasındadır.
+tam silinib. Qərar qaydaları `app/strategy.py` daxilindəki `trend-continuation-v2` strategiyasındadır.
 
 Bu strategiyanın gəlirliliyi sübut edilməyib. Testlər proqramın davranışını yoxlayır,
 gələcək qazancı yox. Real pul, exchange açarları və live rejim qadağandır.
@@ -12,17 +12,25 @@ gələcək qazancı yox. Real pul, exchange açarları və live rejim qadağand�
 Yalnız bağlanmış 15m, 1h və 4h şamlar işlənir. Hər period üçün minimum 250 şam,
 vaxt ardıcıllığı, qiymətlər və təzəlik yoxlanır. Davam edən şam giriş qərarına daxil edilmir.
 
-LONG üçün bütün şərtlər tələb olunur; SHORT üçün simmetrik tərsi tətbiq edilir:
+LONG üçün bütün risk qapıları və aşağıdakı setup şərtləri tələb olunur; SHORT
+üçün simmetrik qaydalar tətbiq edilir:
 
-1. Həm 1h, həm 4h: qiymət > EMA20 > EMA50 > EMA200; EMA50 yüksəlir.
-2. Son bağlanmış 15m şam EMA20-ni yenicə yuxarı keçib: əvvəlki bağlanış əvvəlki
-   EMA20-dən yuxarı deyil, cari bağlanış cari EMA20-dən yuxarıdır.
-3. 15m MACD histogramı müsbətdir və artır; RSI 50–68-dir (SHORT: 32–50).
-4. Həcm əvvəlki 20 şamın ortasından az deyil; EMA20-dən uzaqlıq maksimum 1 ATR-dir.
+1. 1h bağlanışı EMA50-nin üstündədir, EMA20 > EMA50 və EMA50 artır; 4h bağlanışı
+   EMA50-nin üstündədir və EMA50 artır. EMA200 sıralanması tələb edilmir, çünki
+   trend dəyişəndən sonra günlərlə gecikə bilər.
+2. Son bağlanmış 15m şamda üç girişdən biri olmalıdır: təzə EMA20 reclaim; EMA20-ni
+   yoxlayıb onun trend tərəfində bağlanan istiqamətli pullback; yaxud əvvəlki 20
+   şamın diapazonunu bağlanışla qıran breakout.
+3. MACD histogramı trend istiqamətində olmalıdır; breakout əlavə olaraq MACD
+   güclənməsi və ən azı 1.0× orta həcm tələb edir. Pullback/reclaim həcm minimumu
+   0.7×-dir. RSI LONG üçün 45–68, SHORT üçün 32–55 aralığındadır.
+4. Qiymətin EMA20-dən uzaqlığı maksimum 1 ATR-dir.
 5. ATR/qiymət 0.1–5%; mark qiyməti son bağlanışdan maksimum 0.5 ATR uzaqdadır.
 6. Spread, istiqamət üzrə funding, xərclər sonrası R:R və icra risk yoxlamaları keçir.
 
-Bu göstəricilər ehtimal deyil. Hər qayda keçdi/keçmədi kimi
+Bu dəyişiklik daha çox keyfiyyətli setup tapmağı hədəfləyir, nəticəni zəmanət vermir.
+Yalnız bağlanmış şamlar istifadə olunur və setup tipi UI-da görünür. Bu göstəricilər
+ehtimal deyil. Hər qayda keçdi/keçmədi kimi
 Azərbaycan dilində göstərilir. Trend namizədi təkbaşına giriş deyil; **Hazır siqnal**
 yalnız bridge tərəfindən buraxılmış, təzə icra planını göstərir.
 
@@ -244,7 +252,7 @@ Reviewed [Freqtrade's official strategy collection](https://github.com/freqtrade
 Its authors describe the examples as educational starting points, not ready-to-use
 profitable strategies. No third-party strategy was copied or vendored. The existing
 Freqtrade executor is retained, with an original deterministic multi-timeframe EMA
-reclaim strategy and symmetric entry gates. This avoids another bot process and
+continuation strategy using reclaim, pullback and breakout setups. This avoids another bot process and
 unvalidated dependencies. All external AI requests and probability-based gates are removed.
 
 Historical design notes under `docs/` describe earlier versions and are not the

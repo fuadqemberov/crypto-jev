@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
   const page=await browser.newPage({viewport:{width:1600,height:1100}});
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   const state={rows:[],market_symbols:['BTCUSDT'],market_count:1,scanning:false,demo:true,
-   strategy:'trend-reclaim-v1',performance_profile:'balanced',priority_symbols:['BTCUSDT'],
+   strategy:'trend-continuation-v2',performance_profile:'balanced',priority_symbols:['BTCUSDT'],
    execution:{connected:false,paused:true,positions:[],trades:[]},
    metrics:{scan_seconds:{radar:120,priority:3},symbol_p50_ms:220,symbol_p95_ms:800},cache:{hit_rate:.75},
    bridge:{health:'unavailable',blocks:['heartbeat'],rejections:{ttl:12,funding:3},executor_rejections:{spread:2}}};

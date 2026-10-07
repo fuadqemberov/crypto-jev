@@ -12,7 +12,7 @@ from .risk import RiskPolicy, finite
 @dataclass(frozen=True)
 class EntryRules:
     """Explicit market units; these are filters, not win probabilities."""
-    min_relative_volume: float = 1.0
+    min_relative_volume: float = .7
     max_extension_atr: float = 1.0
     max_price_gap_atr: float = .5
     min_atr_pct: float = .1
@@ -22,7 +22,7 @@ class EntryRules:
     target_r: float = 2.0
 
     def __post_init__(self) -> None:
-        bounds = {'min_relative_volume': (.5, 5), 'max_extension_atr': (.1, 2),
+        bounds = {'min_relative_volume': (.3, 5), 'max_extension_atr': (.1, 2),
                   'max_price_gap_atr': (.05, 1), 'min_atr_pct': (.01, 2),
                   'max_atr_pct': (.1, 5), 'rsi_long_max': (50, 75),
                   'stop_atr': (1, 4), 'target_r': (1.5, 5)}
