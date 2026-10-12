@@ -148,7 +148,7 @@ const COLUMNS = [
   ['liquidations', 'Likvidasiya', (s) => s.liquidations ? `<span class="neg">${s.liquidations}</span>` : '0'],
   ['avg_leverage', 'Ort. leverage', (s) => isNum(s.avg_leverage) ? s.avg_leverage.toFixed(1) + '×' : '—'],
   ['open_positions', 'Açıq L / S', (s) => `<span class="pos">${s.open_long}</span> / <span class="neg">${s.open_short}</span>`],
-  ['effective_leverage', 'Faktiki lev.', (s) => s.effective_leverage.toFixed(2) + '×'],
+  ['effective_leverage', 'Nominal / balans', (s) => s.effective_leverage.toFixed(2)],
 ];
 const sortValue = (s, col) => col === 'profit_factor' ? (s[col] === 'inf' ? 1e9 : s[col] ?? -1) : col === 'name' ? s.name : (s[col] ?? -1e9);
 
@@ -213,7 +213,7 @@ function renderDetail(d) {
     ['Realizə olunmuş PnL', `<span class="${cls(s.realized)}">${money(s.realized, true)}</span>`, 'bağlanmış əməliyyatlar'],
     ['Açıq PnL', `<span class="${cls(s.unrealized)}">${money(s.unrealized, true)}</span>`, `${s.open_positions} açıq mövqe`],
     ['Sərbəst marja', money(s.cash), `istifadədə ${money(s.used_margin)}`],
-    ['Faktiki leverage', s.effective_leverage.toFixed(2) + '×', `nominal ${money(s.notional)}`],
+    ['Nominal / balans', s.effective_leverage.toFixed(2), `açıq mövqelərin cəmi ${money(s.notional)} — order leverage-i deyil`],
     ['Əməliyyat sayı', s.trades, `${s.long_trades} long · ${s.short_trades} short · ${s.wins} uduş`],
     ['TP / likvidasiya', `${s.take_profits} / ${s.liquidations}`, `ort. leverage ${isNum(s.avg_leverage) ? s.avg_leverage.toFixed(1) + '×' : '—'}`],
     ['Funding', `<span class="${cls(-s.funding)}">${money(-s.funding, true)}</span>`, 'alınan (+) / ödənilən (−)'],
