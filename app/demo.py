@@ -13,10 +13,12 @@ import numpy as np
 import pandas as pd
 
 from .config import Settings
+from .market import Quote
 
 DEMO_SYMBOLS = ('ALFA', 'BETA', 'GAMMA', 'DELTA', 'EPSILON', 'ZETA', 'ETA', 'THETA', 'IOTAX', 'KAPPA', 'LAMBDA',
                 'MU', 'NU', 'XI', 'OMIKRON', 'PI', 'RHO', 'SIGMA', 'TAU', 'UPSILON', 'PHI', 'CHI', 'PSI', 'OMEGA')
 ORIGIN_MS = 1_767_225_600_000  # 2026-01-01 00:00 UTC
+FUNDING_MS = 8 * 3_600_000
 
 
 def _noise(i: np.ndarray, seed: int, salt: int) -> np.ndarray:
@@ -52,6 +54,15 @@ class DemoMarket:
         return zlib.crc32(symbol.encode()) % 997 + 1
 
     def _bars(self, symbol: str, last_index: int) -> pd.DataFrame:
+        cache = self.__dict__.setdefault('_cache', {})
+        hit = cache.get((symbol, last_index))
+        if hit is None:
+            if len(cache) > 4 * len(self.symbols):
+                cache.clear()
+            hit = cache[(symbol, last_index)] = self._make_bars(symbol, last_index)
+        return hit
+
+    def _make_bars(self, symbol: str, last_index: int) -> pd.DataFrame:
         seed = self._seed(symbol)
         first = ORIGIN_MS // self.interval_ms
         i = np.arange(first, last_index + 1, dtype=np.float64)
@@ -73,14 +84,17 @@ class DemoMarket:
         ranked = sorted(self.symbols, key=lambda s: -self._seed(s))
         return [(s, float(1_000_000 * (len(ranked) - n))) for n, s in enumerate(ranked)]
 
-    async def prices(self) -> dict[str, float]:
+    async def quotes(self) -> dict[str, Quote]:
         now = self.now_ms()
         current = now // self.interval_ms
         fraction = (now % self.interval_ms) / self.interval_ms
+        next_funding = (now // FUNDING_MS + 1) * FUNDING_MS
         out = {}
         for s in self.symbols:
             bar = self._bars(s, current).iloc[-1]
-            out[s] = float(bar.open * (bar.close / bar.open) ** fraction)
+            seed = self._seed(s)
+            rate = 0.0001 + 0.0002 * float(np.sin(next_funding / FUNDING_MS * 0.7 + seed))
+            out[s] = Quote(float(bar.open * (bar.close / bar.open) ** fraction), rate, next_funding)
         return out
 
     async def klines(self, symbol: str, limit: int) -> pd.DataFrame:

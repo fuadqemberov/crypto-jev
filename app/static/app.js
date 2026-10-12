@@ -7,7 +7,7 @@ const state = { overview: null, curves: null, curvesAt: 0, detail: null, view: '
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
-const money = (v, sign = false) => isNum(v) ? (sign && v > 0 ? '+' : '') + v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+const money = (v, sign = false) => isNum(v) ? (v = Math.abs(v) < 0.005 ? 0 : v, (sign && v > 0 ? '+' : '') + v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })) : '—';
 const pct = (v, sign = true) => isNum(v) ? (sign && v > 0 ? '+' : '') + v.toFixed(2) + '%' : '—';
 const num = (v, d = 2) => isNum(v) ? v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—';
 const cls = (v) => (isNum(v) && v > 0 ? 'pos' : isNum(v) && v < 0 ? 'neg' : '');
@@ -26,6 +26,9 @@ function duration(ms) {
   const h = ms / 3600000;
   return h >= 48 ? (h / 24).toFixed(1) + ' gün' : h >= 1 ? h.toFixed(1) + ' saat' : Math.round(ms / 60000) + ' dəq';
 }
+const REASONS = { take_profit: ['TP', 'tp'], signal: ['Siqnal', ''], reverse: ['Çevrilmə', ''], liquidation: ['Likvidasiya', 'liq'] };
+const reasonTag = (r) => { const [t, c] = REASONS[r] || [r, '']; return `<span class="reason ${c}">${esc(t)}</span>`; };
+const sideTag = (side, suffix = '') => `<span class="side ${side === 'LONG' ? 'buy' : 'sell'}">${esc(side)}${suffix}</span>`;
 const color = (i, n = 20) => `hsl(${Math.round(i * 360 / n)}, 72%, 60%)`;
 
 async function getJSON(url) {
@@ -60,15 +63,16 @@ function step(delta) {
 function renderStatus(st) {
   state.clockOffset = st.now - Date.now();
   const mode = $('mode');
-  mode.textContent = st.mode === 'demo' ? 'DEMO (sintetik bazar)' : 'CANLI BAZAR · VİRTUAL HESAB';
+  mode.textContent = st.mode === 'demo' ? 'DEMO · SİNTETİK FUTURES' : 'USDT-M FUTURES · VİRTUAL HESAB';
   mode.className = 'mode' + (st.mode === 'demo' ? ' demo' : '');
   $('st-tf').textContent = st.timeframe;
+  $('st-rules').textContent = `${st.take_profit > 0 ? '$' + st.take_profit : 'yox'} · marja ${st.margin_pct}% · maks ${st.max_leverage}×`;
   $('st-universe').textContent = st.universe ? `${st.universe}${st.symbols === 'ALL' ? ' (top ' + st.top_n + ')' : ''}` : '—';
   $('st-candle').textContent = when(st.last_candle);
   const age = st.last_price_at ? Math.round((Date.now() - st.last_price_at) / 1000) : null;
   $('st-price').textContent = age === null ? '—' : `${age} s əvvəl`;
   $('notice').textContent = st.error ? `Bazar məlumatı xətası: ${st.error.message} — növbəti dövrdə yenidən cəhd edilir.` :
-    (!st.last_candle ? 'İlk bağlanmış şam gözlənilir / yüklənir… Hesablar 2000 $ ilə başlayır; mövqelər yalnız təzə siqnal gələndə açılır.' : '');
+    (!st.last_candle ? 'İlk bağlanmış şam gözlənilir / yüklənir… Hər hesab 2000 $ ilə başlayır; LONG/SHORT mövqelər yalnız təzə siqnal gələndə açılır.' : '');
   state.status = st;
   tickClock();
 }
@@ -86,7 +90,7 @@ function renderNav() {
   $('nav-list').innerHTML = list.map((s) => `
     <a class="nav-item${state.view === s.key ? ' active' : ''}" href="#/s/${esc(s.key)}">
       <span class="nav-rank">#${s.rank}</span>
-      <span class="nav-name">${esc(s.name)}<small>${esc(s.family)} · ${s.open_positions} mövqe · ${s.trades} əməliyyat</small></span>
+      <span class="nav-name">${esc(s.name)}<small>${esc(s.family)} · ${s.open_long}L/${s.open_short}S açıq · ${s.trades} əməliyyat</small></span>
       <span class="nav-ret ${cls(s.return_pct)}">${pct(s.return_pct)}</span>
     </a>`).join('');
   document.querySelector('.nav-overview').classList.toggle('active', !state.view);
@@ -140,8 +144,11 @@ const COLUMNS = [
   ['win_rate', 'Uduş %', (s) => isNum(s.win_rate) ? s.win_rate.toFixed(1) + '%' : '—'],
   ['profit_factor', 'Mənfəət faktoru', (s) => pf(s.profit_factor)],
   ['max_dd_pct', 'Maks. geriləmə', (s) => `<span class="neg">${isNum(s.max_dd_pct) && s.max_dd_pct > 0 ? '-' + s.max_dd_pct.toFixed(2) + '%' : '0.00%'}</span>`],
-  ['open_positions', 'Açıq mövqe', (s) => `${s.open_positions}/${state.status?.max_positions ?? ''}`],
-  ['exposure_pct', 'Bazarda', (s) => pct(s.exposure_pct, false)],
+  ['take_profits', 'TP bağlanış', (s) => s.take_profits],
+  ['liquidations', 'Likvidasiya', (s) => s.liquidations ? `<span class="neg">${s.liquidations}</span>` : '0'],
+  ['avg_leverage', 'Ort. leverage', (s) => isNum(s.avg_leverage) ? s.avg_leverage.toFixed(1) + '×' : '—'],
+  ['open_positions', 'Açıq L / S', (s) => `<span class="pos">${s.open_long}</span> / <span class="neg">${s.open_short}</span>`],
+  ['effective_leverage', 'Faktiki lev.', (s) => s.effective_leverage.toFixed(2) + '×'],
 ];
 const sortValue = (s, col) => col === 'profit_factor' ? (s[col] === 'inf' ? 1e9 : s[col] ?? -1) : col === 'name' ? s.name : (s[col] ?? -1e9);
 
@@ -160,6 +167,7 @@ function renderOverview(ov) {
     ['Mənfəətdə olan', `${winners} / ${rows.length}`, 'strategiya'],
     ['Benchmark', b ? `<span class="${cls(b.return_pct)}">${pct(b.return_pct)}</span>` : '—', b ? `${esc(b.symbol)} al və saxla · ${beat} strategiya qabaqdadır` : 'ilk şamdan sonra'],
     ['Cəmi əməliyyat', rows.reduce((a, s) => a + s.trades, 0), `${rows.reduce((a, s) => a + s.open_positions, 0)} açıq mövqe`],
+    [`TP ($${ov.status.take_profit}) / likvidasiya`, `${rows.reduce((a, s) => a + s.take_profits, 0)} / ${rows.reduce((a, s) => a + s.liquidations, 0)}`, 'bağlanmış əməliyyatlar'],
   ].map(([t, v, sub]) => `<div class="kpi"><small>${t}</small><strong>${v.toString().startsWith('<') ? v : esc(v)}</strong><span>${sub}</span></div>`).join('');
 
   const { col, dir } = state.sort;
@@ -174,11 +182,11 @@ function renderOverview(ov) {
   const benchRow = b ? `<tr class="bench"><td>—</td><td class="l">Benchmark: ${esc(b.symbol)} al və saxla</td><td>${money(b.equity)}</td><td>${pct(b.return_pct)}</td>${'<td></td>'.repeat(COLUMNS.length - 4)}</tr>` : '';
   $('ov-table').innerHTML = head + '<tbody>' + body + benchRow + '</tbody>';
 
-  $('ov-events').innerHTML = '<thead><tr><th>Vaxt</th><th class="l">Strategiya</th><th class="l">Əməliyyat</th><th class="l">Coin</th><th>Qiymət</th><th>Nəticə</th><th>%</th></tr></thead><tbody>' +
+  $('ov-events').innerHTML = '<thead><tr><th>Vaxt</th><th class="l">Strategiya</th><th class="l">Əməliyyat</th><th class="l">Coin</th><th>Lev.</th><th>Qiymət</th><th>Nəticə</th><th>% marja</th></tr></thead><tbody>' +
     (ov.events.length ? ov.events.map((e) => `<tr class="link" data-key="${esc(e.key)}"><td>${when(e.ts)}</td><td class="l">${esc(e.name)}</td>
-      <td class="l"><span class="side ${e.side === 'BUY' ? 'buy' : 'sell'}">${e.side === 'BUY' ? 'ALIŞ' : 'SATIŞ'}</span></td><td class="l">${esc(e.symbol)}</td>
+      <td class="l">${sideTag(e.side, e.action === 'OPEN' ? ' AÇ' : ' BAĞLA')}${e.reason ? ' ' + reasonTag(e.reason) : ''}</td><td class="l">${esc(e.symbol)}</td><td>${e.leverage}×</td>
       <td>${price(e.price)}</td><td class="${cls(e.pnl)}">${isNum(e.pnl) ? money(e.pnl, true) : ''}</td><td class="${cls(e.ret)}">${isNum(e.ret) ? pct(e.ret * 100) : ''}</td></tr>`).join('')
-      : '<tr><td colspan="7" class="empty">Hələ əməliyyat yoxdur — strategiyalar yeni siqnal gözləyir.</td></tr>') + '</tbody>';
+      : '<tr><td colspan="8" class="empty">Hələ əməliyyat yoxdur — strategiyalar yeni siqnal gözləyir.</td></tr>') + '</tbody>';
 }
 
 function renderCurves(curves) {
@@ -196,14 +204,19 @@ function renderDetail(d) {
   $('s-name').textContent = `${s.order}. ${s.name}`;
   $('s-family').textContent = s.family;
   $('s-rank').textContent = `· reytinq #${s.rank} / 20 · başlanğıc ${when(s.started_at)}`;
-  $('s-rules').textContent = d.rules;
+  $('s-rules').textContent = 'LONG: ' + d.rules;
+  $('s-short').textContent = d.short_rule;
+  $('s-lev').textContent = d.leverage_rule + ` Marja: balansın ${d.status.margin_pct}%-i; xalis mənfəət $${d.status.take_profit}-a çatanda bağlanır.`;
   document.title = `${s.name} — 20 Strategiya`;
   const kpis = [
     ['Balans', money(s.equity), `<span class="${cls(s.return_pct)}">${pct(s.return_pct)}</span> (başlanğıc ${money(s.capital)})`],
     ['Realizə olunmuş PnL', `<span class="${cls(s.realized)}">${money(s.realized, true)}</span>`, 'bağlanmış əməliyyatlar'],
     ['Açıq PnL', `<span class="${cls(s.unrealized)}">${money(s.unrealized, true)}</span>`, `${s.open_positions} açıq mövqe`],
-    ['Nağd USDT', money(s.cash), `bazarda ${pct(s.exposure_pct, false)}`],
-    ['Əməliyyat sayı', s.trades, `${s.wins} uduş · ${s.trades - s.wins} itki`],
+    ['Sərbəst marja', money(s.cash), `istifadədə ${money(s.used_margin)}`],
+    ['Faktiki leverage', s.effective_leverage.toFixed(2) + '×', `nominal ${money(s.notional)}`],
+    ['Əməliyyat sayı', s.trades, `${s.long_trades} long · ${s.short_trades} short · ${s.wins} uduş`],
+    ['TP / likvidasiya', `${s.take_profits} / ${s.liquidations}`, `ort. leverage ${isNum(s.avg_leverage) ? s.avg_leverage.toFixed(1) + '×' : '—'}`],
+    ['Funding', `<span class="${cls(-s.funding)}">${money(-s.funding, true)}</span>`, 'alınan (+) / ödənilən (−)'],
     ['Uduş faizi', isNum(s.win_rate) ? s.win_rate.toFixed(1) + '%' : '—', 'bağlanmış əməliyyatlar'],
     ['Mənfəət faktoru', pf(s.profit_factor), 'ümumi qazanc / ümumi itki'],
     ['Maks. geriləmə', s.max_dd_pct > 0 ? `<span class="neg">-${s.max_dd_pct.toFixed(2)}%</span>` : '0.00%', 'pik balansdan düşüş'],
@@ -219,26 +232,36 @@ function renderDetail(d) {
   $('s-bench-note').textContent = d.benchmark_symbol ? `müqayisə: ${d.benchmark_symbol}` : '';
 
   const sig = d.signals || {};
-  const held = new Set(d.positions.map((p) => p.symbol));
-  const chips = (arr, kind) => arr && arr.length ? `<div class="chips">${arr.map((x) => `<span class="chip ${kind}${kind === '' && held.has(x) ? ' held' : ''}">${esc(x)}</span>`).join('')}</div>` : '<div class="muted">—</div>';
+  const held = new Map(d.positions.map((p) => [p.symbol, p.side]));
+  const none = '<div class="muted">—</div>';
+  const orders = (arr, kind) => arr && arr.length ? `<div class="chips">${arr.map((x) =>
+    `<span class="chip ${x.side === 'LONG' ? 'buy' : 'sell'}${kind === 'skip' ? ' skip' : ''}">${esc(x.symbol)} ${esc(x.side)}${x.leverage ? ' ' + x.leverage + '×' : ''}${isNum(x.pnl) ? ' ' + money(x.pnl, true) : ''}</span>`).join('')}</div>` : none;
+  const active = (arr, side) => arr && arr.length ? `<div class="chips">${arr.map((x) =>
+    `<span class="chip${held.get(x) === side ? ' held' : ''}">${esc(x)}</span>`).join('')}</div>` : none;
   $('s-sig-candle').textContent = sig.candle ? `şam: ${when(sig.candle)}` : 'hələ şam işlənməyib';
   $('s-signals').innerHTML = `
-    <h3>Alındı (yeni siqnal)</h3>${chips(sig.entries, 'buy')}
-    <h3>Satıldı (çıxış siqnalı)</h3>${chips(sig.exits, 'sell')}
-    <h3>Boş slot / nağd çatmadığı üçün buraxıldı</h3>${chips(sig.skipped, 'skip')}
-    <h3>Mövqe rejimi aktiv olan coinlər (${(sig.active || []).length}${sig.evaluated ? ' / ' + sig.evaluated : ''}) — sarı çərçivə: hesabda var</h3>${chips(sig.active, '')}`;
+    <h3>Açıldı (yeni siqnal)</h3>${orders(sig.entries)}
+    <h3>Siqnalla bağlandı / çevrildi</h3>${orders(sig.exits)}
+    <h3>Sərbəst marja çatmadığı üçün buraxıldı</h3>${orders(sig.skipped, 'skip')}
+    <h3>LONG rejimində (${(sig.long || []).length}${sig.evaluated ? ' / ' + sig.evaluated : ''}) — sarı çərçivə: hesabda var</h3>${active(sig.long, 'LONG')}
+    <h3>SHORT rejimində (${(sig.short || []).length})</h3>${active(sig.short, 'SHORT')}`;
 
-  $('s-pos-note').textContent = `${d.positions.length} / ${d.status.max_positions} slot`;
-  $('s-positions').innerHTML = '<thead><tr><th>Coin</th><th>Açılış</th><th>Giriş qiyməti</th><th>Cari qiymət</th><th>Miqdar</th><th>Qoyulan</th><th>Dəyər (satış)</th><th>PnL</th><th>%</th></tr></thead><tbody>' +
-    (d.positions.length ? d.positions.map((p) => `<tr><td><b>${esc(p.symbol)}</b></td><td>${when(p.opened_at)}</td><td>${price(p.entry_price)}</td><td>${price(p.price)}</td>
-      <td>${num(p.qty, p.qty >= 100 ? 2 : 6)}</td><td>${money(p.cost)}</td><td>${money(p.value)}</td><td class="${cls(p.pnl)}">${money(p.pnl, true)}</td><td class="${cls(p.ret_pct)}">${pct(p.ret_pct)}</td></tr>`).join('')
-      : '<tr><td colspan="9" class="empty">Açıq mövqe yoxdur</td></tr>') + '</tbody>';
+  const tp = d.status.take_profit;
+  $('s-pos-note').textContent = `${d.positions.length} paralel mövqe (limit yoxdur, yalnız sərbəst marja)`;
+  $('s-positions').innerHTML = '<thead><tr><th>Coin</th><th class="l">İstiqamət</th><th>Lev.</th><th>Açılış</th><th>Giriş</th><th>Mark</th><th>Likv. qiyməti</th><th>Marja</th><th>Nominal</th><th>Funding</th><th>Xalis PnL</th><th>% marja</th><th>TP-yə</th></tr></thead><tbody>' +
+    (d.positions.length ? d.positions.map((p) => `<tr><td><b>${esc(p.symbol)}</b></td><td class="l">${sideTag(p.side)}</td><td>${p.leverage}×</td><td>${when(p.opened_at)}</td>
+      <td>${price(p.entry_price)}</td><td>${price(p.price)}</td><td class="muted">${price(p.liq_price)}</td><td>${money(p.margin)}</td><td>${money(p.notional)}</td>
+      <td class="${cls(-p.funding)}">${money(-p.funding, true)}</td><td class="${cls(p.pnl)}">${money(p.pnl, true)}</td><td class="${cls(p.ret_pct)}">${pct(p.ret_pct)}</td>
+      <td>${tp > 0 ? `<span class="meter"><span class="meter-bar ${p.pnl < 0 ? 'neg' : ''}" data-w="${Math.max(0, Math.min(100, p.pnl / tp * 100)).toFixed(0)}"></span></span> ${money(Math.max(0, tp - p.pnl))}` : '—'}</td></tr>`).join('')
+      : '<tr><td colspan="13" class="empty">Açıq mövqe yoxdur</td></tr>') + '</tbody>';
+  document.querySelectorAll('#s-positions .meter-bar').forEach((el) => { el.style.width = el.dataset.w + '%'; });
 
   $('s-trades-note').textContent = `son ${d.trades.length} əməliyyat`;
-  $('s-trades').innerHTML = '<thead><tr><th>Coin</th><th>Açılış</th><th>Bağlanış</th><th>Müddət</th><th>Giriş</th><th>Çıxış</th><th>Qoyulan</th><th>Nəticə</th><th>%</th><th>Komissiya</th></tr></thead><tbody>' +
-    (d.trades.length ? d.trades.map((t) => `<tr><td><b>${esc(t.symbol)}</b></td><td>${when(t.opened_at)}</td><td>${when(t.closed_at)}</td><td>${duration(t.closed_at - t.opened_at)}</td>
-      <td>${price(t.entry_price)}</td><td>${price(t.exit_price)}</td><td>${money(t.cost)}</td><td class="${cls(t.pnl)}">${money(t.pnl, true)}</td><td class="${cls(t.ret)}">${pct(t.ret * 100)}</td><td>${money(t.fees)}</td></tr>`).join('')
-      : '<tr><td colspan="10" class="empty">Hələ bağlanmış əməliyyat yoxdur</td></tr>') + '</tbody>';
+  $('s-trades').innerHTML = '<thead><tr><th>Coin</th><th class="l">İstiqamət</th><th>Lev.</th><th>Açılış</th><th>Bağlanış</th><th>Müddət</th><th>Giriş</th><th>Çıxış</th><th>Marja</th><th>Nəticə</th><th>% marja</th><th>Komissiya</th><th>Funding</th><th class="l">Səbəb</th></tr></thead><tbody>' +
+    (d.trades.length ? d.trades.map((t) => `<tr><td><b>${esc(t.symbol)}</b></td><td class="l">${sideTag(t.side)}</td><td>${t.leverage}×</td><td>${when(t.opened_at)}</td><td>${when(t.closed_at)}</td><td>${duration(t.closed_at - t.opened_at)}</td>
+      <td>${price(t.entry_price)}</td><td>${price(t.exit_price)}</td><td>${money(t.margin)}</td><td class="${cls(t.pnl)}">${money(t.pnl, true)}</td><td class="${cls(t.ret)}">${pct(t.ret * 100)}</td>
+      <td>${money(t.fees)}</td><td class="${cls(-t.funding)}">${money(-t.funding, true)}</td><td class="l">${reasonTag(t.reason)}</td></tr>`).join('')
+      : '<tr><td colspan="14" class="empty">Hələ bağlanmış əməliyyat yoxdur</td></tr>') + '</tbody>';
 }
 
 /* ---------- refresh loop ---------- */

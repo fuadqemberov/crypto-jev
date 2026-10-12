@@ -1,15 +1,23 @@
-"""Virtual spot accounts: one independent USDT wallet per strategy.
+"""Virtual USDT-M futures accounts: one independent wallet per strategy, isolated margin.
 
-Accounting (long-only spot, no leverage), fee ``f`` and slippage ``s`` per side:
+For a position with side ``d`` (+1 long, −1 short), margin ``M``, leverage ``L``, taker fee ``f``
+and slippage ``s`` per side, opened at price ``p``:
 
-* buy  ``N`` USDT at price ``p``: fee = N·f, fill = p·(1+s), qty = (N − fee) / fill, cash −= N
-* sell ``qty`` at price ``p``:    fill = p·(1−s), gross = qty·fill, proceeds = gross·(1−f), cash += proceeds
-* open positions are marked at their liquidation value (what a sell would return right now),
-  so equity already includes the exit costs and never flatters an open trade.
+* open:  notional = M·L, fill = p·(1 + d·s), qty = notional / fill, entry fee = notional·f,
+         wallet −= M + entry fee
+* mark:  unrealized = d·qty·(mark − fill)
+* close: exit fill = mark·(1 − d·s), gross = d·qty·(exit − fill), exit fee = qty·exit·f,
+         proceeds = max(0, M + gross − exit fee), wallet += proceeds
+* funding at each settlement: payment = d·qty·mark·rate is taken from (or added to) the margin
+* liquidation: when M + unrealized ≤ maint_rate·qty·mark the whole margin is lost
+* take profit: closed as soon as the net PnL (after both fees and funding) ≥ TAKE_PROFIT_USDT
+
+Open positions are valued at what closing them right now would return, so account equity
+already includes exit costs.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 from .config import Settings
 from .store import Store
@@ -18,12 +26,23 @@ from .store import Store
 @dataclass
 class Position:
     symbol: str
+    side: int               # +1 long / -1 short
+    leverage: int
     qty: float
-    entry_price: float      # market price at the decision
-    fill_price: float       # price after slippage
-    cost: float             # USDT spent including the entry fee
-    fee: float
+    entry_price: float      # mark price at the decision
+    fill_price: float       # after slippage
+    margin: float           # current isolated margin (after funding)
+    fee: float              # entry fee
+    funding: float          # net funding paid (+) / received (−)
     opened_at: int
+
+    @property
+    def initial_margin(self) -> float:
+        return self.margin + self.funding
+
+    @property
+    def notional(self) -> float:
+        return self.qty * self.fill_price
 
 
 @dataclass
@@ -55,24 +74,42 @@ class Ledger:
             self.accounts[key] = Account(key, r['capital'], r['cash'], r['started_at'], peak=max(peak, r['capital']), max_dd=dd)
         for p in store.positions():
             if p['key'] in self.accounts:
-                self.accounts[p['key']].positions[p['symbol']] = Position(
-                    p['symbol'], p['qty'], p['entry_price'], p['fill_price'], p['cost'], p['fee'], p['opened_at'])
+                pos = Position(**{k: p[k] for k in Position.__dataclass_fields__})
+                self.accounts[p['key']].positions[p['symbol']] = pos
                 self.last_price.setdefault(p['symbol'], p['entry_price'])
 
     # -- valuation ------------------------------------------------------------------
-    def price(self, symbol: str) -> float:
-        return self.last_price[symbol]
+    def mark(self, pos: Position, price: float | None = None) -> float:
+        return self.last_price.get(pos.symbol, pos.entry_price) if price is None else price
 
-    def liquidation_value(self, pos: Position, price: float | None = None) -> float:
-        price = self.last_price.get(pos.symbol, pos.entry_price) if price is None else price
-        return pos.qty * price * (1 - self.settings.slippage_rate) * (1 - self.settings.fee_rate)
+    def unrealized(self, pos: Position, price: float | None = None) -> float:
+        return pos.side * pos.qty * (self.mark(pos, price) - pos.fill_price)
+
+    def close_value(self, pos: Position, price: float | None = None) -> float:
+        price = self.mark(pos, price)
+        exit_fill = price * (1 - pos.side * self.settings.slippage_rate)
+        gross = pos.side * pos.qty * (exit_fill - pos.fill_price)
+        return max(0.0, pos.margin + gross - pos.qty * exit_fill * self.settings.fee_rate)
+
+    def net_pnl(self, pos: Position, price: float | None = None) -> float:
+        """What closing now would add to the account versus never opening (fees + funding included)."""
+        return self.close_value(pos, price) - pos.initial_margin - pos.fee
+
+    def liquidation_price(self, pos: Position) -> float:
+        q, e, m, mmr = pos.qty, pos.fill_price, pos.margin, self.settings.maint_margin_rate
+        if pos.side > 0:
+            return max(0.0, (q * e - m) / (q * (1 - mmr)))
+        return (m + q * e) / (q * (1 + mmr))
+
+    def is_liquidated(self, pos: Position, price: float) -> bool:
+        return pos.margin + self.unrealized(pos, price) <= self.settings.maint_margin_rate * pos.qty * price
 
     def equity(self, key: str) -> float:
         acc = self.accounts[key]
-        return acc.cash + sum(self.liquidation_value(p) for p in acc.positions.values())
+        return acc.cash + sum(self.close_value(p) for p in acc.positions.values())
 
     def update_prices(self, prices: dict[str, float]) -> dict[str, float]:
-        """Store fresh prices, update running peak / drawdown, return equity per account."""
+        """Store fresh marks, update running peak / drawdown, return equity per account."""
         self.last_price.update({k: v for k, v in prices.items() if v > 0})
         out = {}
         for key, acc in self.accounts.items():
@@ -87,43 +124,66 @@ class Ledger:
         return {s for acc in self.accounts.values() for s in acc.positions}
 
     # -- orders ---------------------------------------------------------------------
-    def order_size(self, key: str) -> float:
+    def order_margin(self, key: str, leverage: int) -> float:
         acc = self.accounts[key]
-        if len(acc.positions) >= self.settings.max_positions:
-            return 0.0
-        size = min(self.equity(key) / self.settings.max_positions, acc.cash)
-        return size if size >= self.settings.min_order else 0.0
+        target = self.equity(key) * self.settings.margin_pct / 100
+        affordable = acc.cash / (1 + leverage * self.settings.fee_rate)   # margin + entry fee must fit
+        margin = min(target, affordable)
+        return margin if margin >= self.settings.min_margin else 0.0
 
-    def buy(self, key: str, symbol: str, price: float, ts: int) -> Position | None:
+    def open(self, key: str, symbol: str, side: int, leverage: int, price: float, ts: int) -> Position | None:
         acc = self.accounts[key]
-        notional = self.order_size(key)
-        if symbol in acc.positions or notional <= 0 or not price > 0:
+        if symbol in acc.positions or side not in (1, -1) or not price > 0 or leverage < 1:
             return None
+        margin = self.order_margin(key, leverage)
+        if margin <= 0:
+            return None
+        notional = margin * leverage
+        fill = price * (1 + side * self.settings.slippage_rate)
         fee = notional * self.settings.fee_rate
-        fill = price * (1 + self.settings.slippage_rate)
-        pos = Position(symbol, (notional - fee) / fill, price, fill, notional, fee, ts)
-        cash = acc.cash - notional
-        self.store.open_position(key, cash, pos.__dict__)
+        pos = Position(symbol, side, leverage, notional / fill, price, fill, margin, fee, 0.0, ts)
+        cash = acc.cash - margin - fee
+        self.store.open_position(key, cash, asdict(pos))
         acc.cash = cash
         acc.positions[symbol] = pos
         self.last_price[symbol] = price
         return pos
 
-    def sell(self, key: str, symbol: str, price: float, ts: int, reason: str) -> dict | None:
+    def close(self, key: str, symbol: str, price: float, ts: int, reason: str) -> dict | None:
         acc = self.accounts[key]
         pos = acc.positions.get(symbol)
         if pos is None or not price > 0:
             return None
-        fill = price * (1 - self.settings.slippage_rate)
-        gross = pos.qty * fill
-        exit_fee = gross * self.settings.fee_rate
-        proceeds = gross - exit_fee
-        trade = dict(symbol=symbol, qty=pos.qty, entry_price=pos.entry_price, exit_price=price, cost=pos.cost,
-                     proceeds=proceeds, pnl=proceeds - pos.cost, ret=proceeds / pos.cost - 1,
-                     fees=pos.fee + exit_fee, opened_at=pos.opened_at, closed_at=ts, reason=reason)
+        exit_fill = price * (1 - pos.side * self.settings.slippage_rate)
+        if reason == 'liquidation':
+            proceeds, exit_fee = 0.0, 0.0
+        else:
+            exit_fee = pos.qty * exit_fill * self.settings.fee_rate
+            proceeds = self.close_value(pos, price)
+        cost = pos.initial_margin + pos.fee
+        trade = dict(symbol=symbol, side=pos.side, leverage=pos.leverage, qty=pos.qty, entry_price=pos.entry_price,
+                     exit_price=price, margin=pos.initial_margin, notional=pos.notional, proceeds=proceeds,
+                     pnl=proceeds - cost, ret=(proceeds - cost) / pos.initial_margin, fees=pos.fee + exit_fee,
+                     funding=pos.funding, opened_at=pos.opened_at, closed_at=ts, reason=reason)
         cash = acc.cash + proceeds
         trade['id'] = self.store.close_position(key, cash, trade)
         acc.cash = cash
         del acc.positions[symbol]
         self.last_price[symbol] = price
         return trade
+
+    def apply_funding(self, symbol: str, rate: float, price: float, funding_time: int) -> float:
+        """Settle one funding period for every position in ``symbol`` opened before it. Returns total paid."""
+        rows, total = [], 0.0
+        for acc in self.accounts.values():
+            pos = acc.positions.get(symbol)
+            if pos is None or pos.opened_at >= funding_time:
+                continue
+            payment = pos.side * pos.qty * price * rate
+            pos.margin -= payment
+            pos.funding += payment
+            total += payment
+            rows.append((pos.margin, pos.funding, acc.key, symbol))
+        if rows:
+            self.store.update_margin(rows)
+        return total

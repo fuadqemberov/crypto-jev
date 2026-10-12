@@ -3,18 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>20 Strategiya — virtual ticarət</title>
+<title>20 Strategiya — virtual futures</title>
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/chart.umd.min.js" defer></script>
 <script src="/static/app.js" defer></script>
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="#/">20 Strategiya <span>virtual ticarət</span></a>
+  <a class="brand" href="#/">20 Strategiya <span>virtual futures</span></a>
   <span id="mode" class="mode">…</span>
   <div class="status">
     <span>Timeframe <b id="st-tf">—</b></span>
     <span>Coin <b id="st-universe">—</b></span>
+    <span>TP <b id="st-rules">—</b></span>
     <span>Son şam <b id="st-candle">—</b></span>
     <span>Növbəti şam <b id="st-next">—</b></span>
     <span>Qiymət <b id="st-price">—</b></span>
@@ -56,7 +57,7 @@
         </div>
         <button id="next" class="nav-btn" title="Növbəti strategiya (→)">›</button>
       </div>
-      <p class="rules" id="s-rules"></p>
+      <div class="rules"><p id="s-rules"></p><p id="s-short"></p><p id="s-lev"></p></div>
       <div class="kpis" id="s-kpis"></div>
       <div class="grid-2">
         <div class="panel">
@@ -77,7 +78,7 @@
         <div class="table-wrap"><table id="s-trades"></table></div>
       </div>
     </section>
-    <footer>Yalnız virtual (paper) ticarət — real order, API açarı və ya pul yoxdur. Keçmiş və cari nəticələr gələcək gəliri göstərmir.</footer>
+    <footer>Yalnız virtual (paper) futures ticarəti — real order, API açarı və ya pul yoxdur. Leverage itkiləri də böyüdür. Keçmiş və cari nəticələr gələcək gəliri göstərmir.</footer>
   </main>
 </div>
 </body>

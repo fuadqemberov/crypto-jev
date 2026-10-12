@@ -1,13 +1,13 @@
-# 20 Strategiya — canlı virtual ticarət
+# 20 Strategiya — canlı virtual futures ticarəti
 
-Python 3.12+ · FastAPI · Binance spot açıq bazar məlumatı · Azərbaycan dilində dashboard.
+Python 3.12+ · FastAPI · Binance USDT-M futures açıq bazar məlumatı · Azərbaycan dilində dashboard.
 
-20 klassik texniki analiz strategiyasının **hər biri ayrıca 2000 $ virtual hesabla**, öz qaydası ilə
-canlı Binance qiymətləri üzərində ticarət edir. Dashboard-da strategiyalar arasında bölmə-bölmə keçid
-edib hansının uğurlu olduğunu özünüz müşahidə edirsiniz.
+20 klassik texniki analiz strategiyasının **hər biri ayrıca 2000 $ virtual futures hesabı ilə**, öz qaydası
+ilə LONG və SHORT açır, leverage-i özü seçir. Dashboard-da strategiyalar arasında bölmə-bölmə keçid edib
+hansının uğurlu olduğunu özünüz müşahidə edirsiniz.
 
-**Yalnız virtual (paper) ticarət.** Real order, exchange API açarı, leverage və pul yoxdur.
-Binance-dən yalnız açıq market-data GET sorğuları edilir.
+**Yalnız virtual (paper) ticarət.** Real order, exchange API açarı və pul yoxdur. Binance-dən yalnız açıq
+market-data GET sorğuları (`/fapi/v1`) edilir. Leverage həm qazancı, həm itkini böyüdür — likvidasiyalar da simulyasiya olunur.
 
 ## Quraşdırma və işə salma
 
@@ -19,73 +19,75 @@ cp .env.example .env
 ```
 
 Dashboard: <http://127.0.0.1:8082>. Windows: Python 3.12+ quraşdırın və `run.cmd` işlədin.
-Tək proses: engine və dashboard birlikdədir; `--workers 1` saxlayın (bir neçə worker hesabları ikiləşdirər).
+Tək proses: engine və dashboard birlikdədir; `--workers 1` saxlayın.
 
-Şəbəkəsiz sınaq: `.env`-də `DEMO_MODE=true` — sintetik bazar, sürətləndirilmiş saat
-(hər `DEMO_CANDLE_SECONDS` saniyədə bir şam). Demo ayrıca `data/demo.db` istifadə edir.
+`fapi.binance.com` bəzi regionlarda (məs. ABŞ) HTTP 451 qaytarır; o halda serveri icazə verilən regionda
+işlədin. Şəbəkəsiz sınaq: `DEMO_MODE=true` — sintetik futures bazarı, sürətləndirilmiş saat
+(hər `DEMO_CANDLE_SECONDS` saniyədə bir şam), ayrıca `data/demo-futures.db`.
 
 ## Necə işləyir
 
 | Addım | Təsvir |
 |---|---|
-| Coin siyahısı | `SYMBOLS=ALL`: 24 saatlıq həcmə görə ən böyük `TOP_N` (default 50) USDT spot cütü. Stablecoin, fiat, qızıl, wrapped və UP/DOWN tokenləri çıxarılır. Siyahı hər şamda yenilənir. |
-| Qiymət | Hər `PRICE_REFRESH_SECONDS` (15 s) bütün qiymətlər yenilənir, 20 hesabın balansı bazar qiyməti ilə yenidən hesablanır. |
-| Siqnal | Şam bağlananda (default 1h) son `HISTORY_BARS` bağlanmış şam yüklənir və hər strategiya `backtest/strategies.py`-dəki **eyni** funksiya ilə hesablanır. Formalaşan şam istifadə edilmir. |
-| Çıxış | Strategiyanın tutduğu coin-də mövqe vəziyyəti 0 olarsa satılır. |
-| Giriş | Vəziyyət bağlanmış şamda 0 → 1 dəyişibsə (təzə siqnal) və boş slot varsa alınır. Bir neçə siqnal olarsa həcmi böyük olan coin üstündür; yer çatmayanlar “buraxıldı” kimi göstərilir. |
-| Ölçü | Mövqe = hesab balansı / `MAX_POSITIONS` (default 10 → ~200 $), nağddan çox olmamaq şərti ilə; minimum `MIN_ORDER_USDT`. |
-| Xərc | Hər tərəfə 0.10% komissiya + 0.05% sürüşmə. Açıq mövqelər satış dəyəri ilə (xərclər çıxılmış) qiymətləndirilir. |
-| Benchmark | BTCUSDT “al və saxla” — eyni 2000 $ ilk şamda alınmış kimi. |
+| Bazar | USDT-M **perpetual** kontraktlar; `SYMBOLS=ALL` → 24 saatlıq həcmə görə ən böyük `TOP_N` (50). Stablecoin, kvartallıq, əmtəə/qeyri-kripto kontraktlar çıxarılır. |
+| Qiymət | Hər 15 s bütün **mark qiymətlər** və funding yenilənir; 20 hesab yenidən qiymətləndirilir. |
+| LONG | Strategiyanın öz qaydası (`backtest/strategies.py`) bağlanmış şamda. |
+| SHORT | Eyni qayda qiymətin **güzgü seriyasına** (hər qiymət → 1/qiymət, high↔low) tətbiq olunur — bazarın tam əksi. Məs. SMA20 SMA50-nin altına düşəndə, RSI 70-i aşağı kəsəndə, Donçian minimumu qırılanda SHORT. |
+| Açılış | İstiqamət bağlanmış şamda dəyişibsə (təzə siqnal). Eyni şamda LONG→SHORT olarsa köhnə bağlanır, yenisi açılır („Çevrilmə“). |
+| Bağlanış | 1) xalis mənfəət ≥ **`TAKE_PROFIT_USDT` (15 $)** — hər 15 s yoxlanır; 2) strategiyanın istiqaməti dəyişəndə; 3) likvidasiya. |
+| Paralel | **Mövqe sayına limit yoxdur.** Hər coin-də bir strategiyanın bir mövqeyi ola bilər; yeni mövqe yalnız sərbəst marja çatmayanda buraxılır. Çox siqnal gələndə həcmi böyük coin üstündür. |
+| Marja | Hər mövqe: cari balansın `ORDER_MARGIN_PCT` (5% → ~100 $), isolated margin. Nominal = marja × leverage. |
+| Xərc | Hər tərəfə 0.05% taker komissiyası + 0.05% sürüşmə; hər 8 saatlıq funding (long müsbət dərəcədə ödəyir, short alır) marjadan çıxılır/əlavə olunur. |
+| Likvidasiya | Marja + açıq PnL ≤ 0.5% × nominal olduqda bütün marja itir. Hər qiymət yoxlamasında və tam saxlanılmış şamın high/low-u ilə yoxlanılır. |
+| Benchmark | BTCUSDT 1× „al və saxla“. |
 
-Strategiyalar başlanğıcda artıq “mövqedə” olan coinlərə girmir — yalnız yeni siqnal gözləyir; ona görə
-ilk saatlarda bəzi hesablar boş qala bilər. Hər hesab tamamilə müstəqildir: bir strategiyanın mövqeləri,
-nağdı və nəticəsi digərlərinə təsir etmir.
+### Leverage-i strategiya özü seçir
 
-| # | Strategiya | Ailə |
-|---|---|---|
-| 1 | SMA kəsişməsi (20/50) | Trend |
-| 2 | EMA kəsişməsi (12/26) | Trend |
-| 3 | RSI həddindən artıq alış/satış | Orta qiymətə qayıdış |
-| 4 | MACD siqnal xətti kəsişməsi | Momentum |
-| 5 | Bollinger orta qiymətə qayıdış | Orta qiymətə qayıdış |
-| 6 | Bollinger qırılması | Qırılma |
-| 7 | Stoxastik osilyator | Momentum |
-| 8 | ADX trend izləmə | Trend |
-| 9 | İçimoku buludu | Trend |
-| 10 | VWAP strategiyası | Həcm |
-| 11 | Supertrend (10, 3) | Trend |
-| 12 | Donçian kanal qırılması | Qırılma |
-| 13 | Williams %R | Orta qiymətə qayıdış |
-| 14 | CCI (Əmtəə Kanal İndeksi) | Orta qiymətə qayıdış |
-| 15 | Parabolik SAR | Trend |
-| 16 | Keltner kanalı | Qırılma |
-| 17 | ATR izləyən stop | Qırılma |
-| 18 | Üçqat EMA (TEMA 10/30) | Trend |
-| 19 | Pul axını indeksi (MFI) | Həcm |
-| 20 | RSI + MACD kombinasiyası | Momentum |
+Hər strategiya gözlədiyi əks hərəkəti ATR(14) əmsalı ilə və öz leverage tavanı ilə bəyan edir. Hər girişdə:
 
-Dəqiq qaydalar hər strategiyanın bölməsində və `backtest/strategies.py`-dədir.
+```text
+leverage = floor(0.5 / (ATR% × atr_əmsalı)),  1× … min(strategiyanın tavanı, MAX_LEVERAGE)
+```
+
+Yəni strategiyanın tipik əks hərəkəti marjanın ən çox ~50%-ni aparır, likvidasiya isə təxminən iki dəfə uzaqdadır.
+Sakit coin-də leverage yüksək, dəyişkən coin-də aşağı olur.
+
+| Strategiya | ATR əmsalı | Öz tavanı | Strategiya | ATR əmsalı | Öz tavanı |
+|---|---:|---:|---|---:|---:|
+| SMA kəsişməsi | 3.0 | 10× | Supertrend | 3.0 | 10× |
+| EMA kəsişməsi | 3.0 | 10× | Donçian | 3.5 | 8× |
+| RSI | 2.0 | 15× | Williams %R | 2.0 | 15× |
+| MACD | 2.5 | 12× | CCI | 2.0 | 15× |
+| Bollinger qayıdış | 2.0 | 15× | Parabolik SAR | 2.5 | 10× |
+| Bollinger qırılma | 3.0 | 8× | Keltner | 3.0 | 8× |
+| Stoxastik | 2.0 | 12× | ATR izləyən stop | 3.0 | 10× |
+| ADX | 3.0 | 10× | TEMA | 2.5 | 12× |
+| İçimoku | 3.0 | 10× | MFI | 2.0 | 12× |
+| VWAP | 2.5 | 12× | RSI + MACD | 2.5 | 12× |
+
+Profil `app/futures.py` faylındadır (`LEVERAGE_PROFILE`).
 
 ## Dashboard
 
-- **Ümumi baxış** — 20 hesabın balans qrafiki (benchmark ilə), sıralana bilən reytinq cədvəli
-  (balans, gəlir, realizə/açıq PnL, əməliyyat sayı, uduş faizi, mənfəət faktoru, maks. geriləmə,
-  açıq mövqe, bazarda olma payı) və son əməliyyatlar.
-- **Strategiya bölmələri (20)** — sol menyudan (telefonda açılan siyahıdan), `‹ ›` düymələri və ya
-  klaviaturada ← → ilə keçid. Hər bölmədə: qayda, KPI-lar, balans vs benchmark qrafiki, son şamın
-  alış/satış/buraxılan siqnalları, açıq mövqelər və tam əməliyyat tarixçəsi.
-- Səhifə hər 10 saniyədə yenilənir. Dashboard yalnız oxuyur — HTTP ilə hesablara heç nə yazmaq mümkün deyil.
+- **Ümumi baxış** — 20 hesabın balans qrafiki (benchmark ilə), sıralana bilən reytinq (balans, gəlir, realizə/açıq PnL,
+  əməliyyat, uduş %, mənfəət faktoru, maks. geriləmə, TP bağlanışları, likvidasiyalar, orta və faktiki leverage,
+  açıq LONG/SHORT) və son əməliyyatlar.
+- **Strategiya bölmələri (20)** — sol menyu, telefonda açılan siyahı, `‹ ›` düymələri və ya ← → oxları ilə keçid.
+  Hər bölmədə: LONG/SHORT/leverage qaydası, KPI-lar, balans qrafiki, son şamın siqnalları, açıq mövqelər
+  (istiqamət, leverage, mark, likvidasiya qiyməti, marja, funding, xalis PnL, TP-yə qalan məbləğ) və tarixçə
+  (bağlanma səbəbi: TP / Siqnal / Çevrilmə / Likvidasiya).
+- Dashboard yalnız oxuyur — HTTP ilə hesablara heç nə yazmaq mümkün deyil.
 
 API: `GET /api/overview`, `GET /api/curves`, `GET /api/strategy/{key}`, `GET /health`.
 
 ## Məlumat, restart və sıfırlama
 
-- Hesablar, mövqelər, əməliyyatlar və balans tarixçəsi `data/strategies.db` (SQLite) faylındadır.
-  Restart-dan sonra hər şey qaldığı yerdən davam edir; eyni şam iki dəfə işlənmir.
-- Proses dayanıqda qiymət izlənmir: çıxış siqnalları növbəti işlənən şamda icra olunur.
-- **Yarışı sıfırdan başlatmaq**: prosesi dayandırın, `data/strategies.db*` fayllarını silin, yenidən başladın.
-- `START_CAPITAL`, `MAX_POSITIONS`, `TIMEFRAME` və ya coin siyahısını dəyişsəniz müqayisənin ədalətli
-  qalması üçün DB-ni sıfırlamağınız tövsiyə olunur (mövcud hesablar köhnə başlanğıc kapitalını saxlayır).
+- Hesablar, mövqelər, əməliyyatlar və balans tarixçəsi `data/futures.db` (SQLite) faylındadır. Restart-dan sonra
+  hər şey qaldığı yerdən davam edir; eyni şam iki dəfə işlənmir. Köhnə spot versiyasının `data/strategies.db` faylı istifadə edilmir.
+- Proses dayanıqda qiymət izlənmir: TP, likvidasiya və funding bu müddətdə yoxlanmır (növbəti şamda yalnız son şamın
+  high/low-u ilə likvidasiya yoxlanır).
+- **Yarışı sıfırdan başlatmaq**: prosesi dayandırın, `data/futures.db*` fayllarını silin, yenidən başladın.
+  Parametrləri dəyişsəniz də müqayisənin ədalətli qalması üçün sıfırlamaq tövsiyə olunur.
 
 ## Serverdə 7/24
 
@@ -102,7 +104,7 @@ Köhnə `crypto-jev*.service` unit-lərini dayandırıb silin (`systemctl disabl
 
 ## 20 strategiyalı backtest modulu (`backtest/`)
 
-Eyni 20 strategiya tarixi məlumat üzərində də test edilə bilər:
+Eyni 20 strategiyanın LONG qaydaları tarixi məlumat üzərində də test edilə bilər (backtest spot, yalnız long, 1×):
 
 ```bash
 python -m backtest --days 183 --capital 2000 --out crypto_strategies_report.html
@@ -114,8 +116,7 @@ python -m backtest --days 183 --capital 2000 --out crypto_strategies_report.html
 - Kapital coinlərə bərabər bölünür, yalnız long spot. Siqnal şam bağlananda, icra növbəti şamın açılışında.
 - Son nəticə nümunəsi: `reports/crypto_strategies_report.html` (12 Aprel — 12 Oktyabr 2026, 383 coin).
 
-Backtest bütün coinlərə bərabər bölünmüş kapitalla, canlı sistem isə top-N coin və slot limiti ilə işləyir,
-ona görə rəqəmlər birbaşa üst-üstə düşməyəcək; strategiya qaydaları eynidir.
+Backtest spot, long-only və leverage-siz olduğu üçün canlı futures nəticələri ilə birbaşa üst-üstə düşməyəcək.
 
 ## Testlər
 
@@ -124,9 +125,10 @@ ona görə rəqəmlər birbaşa üst-üstə düşməyəcək; strategiya qaydalar
 node --check app/static/app.js
 ```
 
-Testlər mühasibat (komissiya/sürüşmə, equity = kapital + realizə + açıq PnL), təzə siqnalla giriş,
-çıxış, slot prioriteti, köhnə şamın rədd edilməsi, restart, demo bazarda 20 strategiya, API təhlükəsizliyi
+Testlər futures mühasibatı (long/short, komissiya, sürüşmə, funding, likvidasiya qiyməti,
+equity = kapital + realizə + açıq PnL), 15 $ TP, çevrilmə, limitsiz paralel mövqelər, strategiya leverage-i,
+güzgü SHORT qaydası, restart, demo bazarda 20 strategiya, Binance futures cavablarının emalı, API təhlükəsizliyi
 və konfiqurasiya yoxlamalarını əhatə edir.
 
-**Xəbərdarlıq:** bu sistem investisiya məsləhəti deyil. Virtual nəticələr real likvidlik, gecikmə
+**Xəbərdarlıq:** bu sistem investisiya məsləhəti deyil. Leverage-li futures real hesabda qısa müddətdə bütün marjanı itirə bilər. Virtual nəticələr real likvidlik, gecikmə
 və sürüşmə şəraitində fərqli ola bilər; keçmiş və cari nəticələr gələcək gəliri göstərmir.

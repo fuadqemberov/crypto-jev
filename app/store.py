@@ -1,4 +1,4 @@
-"""SQLite persistence for the 20 virtual accounts (positions, trades, equity curve)."""
+"""SQLite persistence for the 20 virtual futures accounts (positions, trades, equity curve)."""
 from __future__ import annotations
 
 import json
@@ -11,18 +11,24 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS accounts (
     key TEXT PRIMARY KEY, cash REAL NOT NULL, capital REAL NOT NULL, started_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS positions (
-    key TEXT NOT NULL, symbol TEXT NOT NULL, qty REAL NOT NULL, entry_price REAL NOT NULL,
-    fill_price REAL NOT NULL, cost REAL NOT NULL, fee REAL NOT NULL, opened_at INTEGER NOT NULL,
+    key TEXT NOT NULL, symbol TEXT NOT NULL, side INTEGER NOT NULL, leverage INTEGER NOT NULL,
+    qty REAL NOT NULL, entry_price REAL NOT NULL, fill_price REAL NOT NULL, margin REAL NOT NULL,
+    fee REAL NOT NULL, funding REAL NOT NULL, opened_at INTEGER NOT NULL,
     PRIMARY KEY (key, symbol));
 CREATE TABLE IF NOT EXISTS trades (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, symbol TEXT NOT NULL, qty REAL NOT NULL,
-    entry_price REAL NOT NULL, exit_price REAL NOT NULL, cost REAL NOT NULL, proceeds REAL NOT NULL,
-    pnl REAL NOT NULL, ret REAL NOT NULL, fees REAL NOT NULL, opened_at INTEGER NOT NULL,
-    closed_at INTEGER NOT NULL, reason TEXT NOT NULL);
+    id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, symbol TEXT NOT NULL, side INTEGER NOT NULL,
+    leverage INTEGER NOT NULL, qty REAL NOT NULL, entry_price REAL NOT NULL, exit_price REAL NOT NULL,
+    margin REAL NOT NULL, notional REAL NOT NULL, proceeds REAL NOT NULL, pnl REAL NOT NULL, ret REAL NOT NULL,
+    fees REAL NOT NULL, funding REAL NOT NULL, opened_at INTEGER NOT NULL, closed_at INTEGER NOT NULL,
+    reason TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS trades_key ON trades (key, closed_at);
 CREATE TABLE IF NOT EXISTS equity (
     key TEXT NOT NULL, ts INTEGER NOT NULL, equity REAL NOT NULL, PRIMARY KEY (key, ts));
 """
+
+POSITION_COLUMNS = ('symbol', 'side', 'leverage', 'qty', 'entry_price', 'fill_price', 'margin', 'fee', 'funding', 'opened_at')
+TRADE_COLUMNS = ('symbol', 'side', 'leverage', 'qty', 'entry_price', 'exit_price', 'margin', 'notional', 'proceeds',
+                 'pnl', 'ret', 'fees', 'funding', 'opened_at', 'closed_at', 'reason')
 
 
 class Store:
@@ -65,17 +71,22 @@ class Store:
     def open_position(self, key: str, cash: float, p: dict) -> None:
         with self.db:
             self.db.execute('UPDATE accounts SET cash=? WHERE key=?', (cash, key))
-            self.db.execute('INSERT INTO positions(key, symbol, qty, entry_price, fill_price, cost, fee, opened_at) '
-                            'VALUES (:key, :symbol, :qty, :entry_price, :fill_price, :cost, :fee, :opened_at)', {'key': key, **p})
+            self.db.execute(f'INSERT INTO positions(key, {", ".join(POSITION_COLUMNS)}) '
+                            f'VALUES (:key, {", ".join(":" + c for c in POSITION_COLUMNS)})',
+                            {'key': key, **{c: p[c] for c in POSITION_COLUMNS}})
+
+    def update_margin(self, rows: list[tuple[float, float, str, str]]) -> None:
+        """(margin, funding, key, symbol) after a funding settlement."""
+        with self.db:
+            self.db.executemany('UPDATE positions SET margin=?, funding=? WHERE key=? AND symbol=?', rows)
 
     def close_position(self, key: str, cash: float, t: dict) -> int:
         with self.db:
             self.db.execute('UPDATE accounts SET cash=? WHERE key=?', (cash, key))
             self.db.execute('DELETE FROM positions WHERE key=? AND symbol=?', (key, t['symbol']))
-            cur = self.db.execute(
-                'INSERT INTO trades(key, symbol, qty, entry_price, exit_price, cost, proceeds, pnl, ret, fees, opened_at, closed_at, reason) '
-                'VALUES (:key, :symbol, :qty, :entry_price, :exit_price, :cost, :proceeds, :pnl, :ret, :fees, :opened_at, :closed_at, :reason)',
-                {'key': key, **t})
+            cur = self.db.execute(f'INSERT INTO trades(key, {", ".join(TRADE_COLUMNS)}) '
+                                  f'VALUES (:key, {", ".join(":" + c for c in TRADE_COLUMNS)})',
+                                  {'key': key, **{c: t[c] for c in TRADE_COLUMNS}})
             return int(cur.lastrowid)
 
     # -- trades / equity ------------------------------------------------------------
@@ -85,10 +96,12 @@ class Store:
 
     def trade_stats(self) -> dict[str, dict]:
         rows = self.db.execute("""
-            SELECT key, COUNT(*) n, SUM(pnl) pnl, SUM(fees) fees, SUM(pnl > 0) wins,
+            SELECT key, COUNT(*) n, SUM(pnl) pnl, SUM(fees) fees, SUM(funding) funding, SUM(pnl > 0) wins,
                    SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END) gross_win,
                    -SUM(CASE WHEN pnl < 0 THEN pnl ELSE 0 END) gross_loss,
-                   AVG(ret) avg_ret, MAX(ret) best, MIN(ret) worst, AVG(closed_at - opened_at) avg_hold
+                   AVG(ret) avg_ret, MAX(ret) best, MIN(ret) worst, AVG(closed_at - opened_at) avg_hold,
+                   SUM(reason = 'take_profit') tp, SUM(reason = 'liquidation') liq,
+                   SUM(side = 1) longs, SUM(side = -1) shorts, AVG(leverage) avg_lev
             FROM trades GROUP BY key""")
         return {r['key']: dict(r) for r in rows}
 

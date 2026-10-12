@@ -1,4 +1,4 @@
-"""Runtime settings for the 20-strategy live paper-trading system (read from .env)."""
+"""Runtime settings for the 20-strategy USDT-M futures paper-trading system (read from .env)."""
 from __future__ import annotations
 
 import math
@@ -19,16 +19,19 @@ class Settings:
     top_n: int = 50
     timeframe: str = '1h'
     capital: float = 2000.0
-    max_positions: int = 10
-    fee_rate: float = 0.001
+    margin_pct: float = 5.0              # margin per order, % of the account's current equity
+    min_margin: float = 5.0              # smallest margin worth opening (USDT)
+    take_profit: float = 15.0            # close as soon as net PnL of a position >= this (USDT); 0 = off
+    max_leverage: int = 20               # global ceiling for the leverage a strategy may choose
+    fee_rate: float = 0.0005             # taker fee per side (Binance USDT-M default 0.05%)
     slippage_rate: float = 0.0005
-    min_order: float = 10.0
+    maint_margin_rate: float = 0.005     # maintenance margin used for the liquidation check
     history_bars: int = 500
     price_seconds: int = 15
     candle_delay_seconds: int = 5
     kline_parallelism: int = 6
     data_dir: Path = Path('data')
-    binance_url: str = 'https://data-api.binance.vision/api/v3'
+    binance_url: str = 'https://fapi.binance.com/fapi/v1'
     user: str = ''
     password: str = field(default='', repr=False)
     demo: bool = False
@@ -39,18 +42,21 @@ class Settings:
             raise ValueError('SYMBOLS: ALL və ya vergüllə ayrılmış USDT cütləri (məs. BTCUSDT,ETHUSDT) olmalıdır.')
         if self.timeframe not in TIMEFRAMES:
             raise ValueError(f'TIMEFRAME bunlardan biri olmalıdır: {", ".join(TIMEFRAMES)}')
-        for name, low, high in [('top_n', 1, 500), ('max_positions', 1, 50), ('history_bars', 250, 1000),
+        for name, low, high in [('top_n', 1, 500), ('max_leverage', 1, 125), ('history_bars', 250, 1000),
                                 ('price_seconds', 5, 300), ('candle_delay_seconds', 0, 120), ('kline_parallelism', 1, 16)]:
             value = getattr(self, name)
             if type(value) is not int or not low <= value <= high:
                 raise ValueError(f'{name.upper()} {low}–{high} aralığında tam ədəd olmalıdır.')
-        for name, low, high in [('capital', 10, 10_000_000), ('fee_rate', 0, 0.01), ('slippage_rate', 0, 0.01),
-                                ('min_order', 1, 10_000), ('demo_candle_seconds', 1, 3600)]:
+        for name, low, high in [('capital', 10, 10_000_000), ('margin_pct', 0.1, 100), ('min_margin', 0.1, 10_000),
+                                ('take_profit', 0, 1_000_000), ('fee_rate', 0, 0.01), ('slippage_rate', 0, 0.01),
+                                ('maint_margin_rate', 0, 0.1), ('demo_candle_seconds', 1, 3600)]:
             value = getattr(self, name)
             if not isinstance(value, (int, float)) or not math.isfinite(value) or not low <= value <= high:
                 raise ValueError(f'{name.upper()} {low}–{high} aralığında olmalıdır.')
-        if self.min_order * self.max_positions > self.capital:
-            raise ValueError('MIN_ORDER_USDT × MAX_POSITIONS başlanğıc kapitaldan böyük ola bilməz.')
+        if self.capital * self.margin_pct / 100 < self.min_margin:
+            raise ValueError('START_CAPITAL × ORDER_MARGIN_PCT minimum marjadan (MIN_MARGIN_USDT) kiçikdir.')
+        if self.maint_margin_rate >= 1 / self.max_leverage:
+            raise ValueError('MAINT_MARGIN_RATE 1/MAX_LEVERAGE-dən kiçik olmalıdır (əks halda mövqe dərhal likvid olur).')
         if bool(self.user) != bool(self.password):
             raise ValueError('DASHBOARD_USER və DASHBOARD_PASSWORD birlikdə verilməlidir.')
         url = urlparse(self.binance_url)
@@ -63,7 +69,7 @@ class Settings:
 
     @property
     def db_path(self) -> Path:
-        return self.data_dir / ('demo.db' if self.demo else 'strategies.db')
+        return self.data_dir / ('demo-futures.db' if self.demo else 'futures.db')
 
     @classmethod
     def load(cls) -> Settings:
@@ -72,14 +78,17 @@ class Settings:
         return cls(
             symbols=tuple(dict.fromkeys(s.strip().upper() for s in env('SYMBOLS', 'ALL').split(',') if s.strip())),
             top_n=int(env('TOP_N', '50')), timeframe=env('TIMEFRAME', '1h').strip(),
-            capital=float(env('START_CAPITAL', '2000')), max_positions=int(env('MAX_POSITIONS', '10')),
-            fee_rate=float(env('FEE_RATE', '0.001')), slippage_rate=float(env('SLIPPAGE_RATE', '0.0005')),
-            min_order=float(env('MIN_ORDER_USDT', '10')), history_bars=int(env('HISTORY_BARS', '500')),
+            capital=float(env('START_CAPITAL', '2000')), margin_pct=float(env('ORDER_MARGIN_PCT', '5')),
+            min_margin=float(env('MIN_MARGIN_USDT', '5')), take_profit=float(env('TAKE_PROFIT_USDT', '15')),
+            max_leverage=int(env('MAX_LEVERAGE', '20')),
+            fee_rate=float(env('FEE_RATE', '0.0005')), slippage_rate=float(env('SLIPPAGE_RATE', '0.0005')),
+            maint_margin_rate=float(env('MAINT_MARGIN_RATE', '0.005')),
+            history_bars=int(env('HISTORY_BARS', '500')),
             price_seconds=int(env('PRICE_REFRESH_SECONDS', '15')),
             candle_delay_seconds=int(env('CANDLE_DELAY_SECONDS', '5')),
             kline_parallelism=int(env('KLINE_PARALLELISM', '6')),
             data_dir=Path(env('DATA_DIR', 'data')),
-            binance_url=env('BINANCE_URL', 'https://data-api.binance.vision/api/v3').rstrip('/'),
+            binance_url=env('BINANCE_URL', 'https://fapi.binance.com/fapi/v1').rstrip('/'),
             user=env('DASHBOARD_USER', ''), password=env('DASHBOARD_PASSWORD', ''),
             demo=env('DEMO_MODE', 'false').strip().lower() == 'true',
             demo_candle_seconds=float(env('DEMO_CANDLE_SECONDS', '20')),

@@ -1,13 +1,15 @@
-"""Binance spot public market data (no API key, read-only).
+"""Binance USDT-M perpetual futures public market data (no API key, read-only).
 
-``data-api.binance.vision`` is Binance's official public market-data mirror; ``api.binance.com``
-returns HTTP 451 in some regions. Only GET requests to public endpoints are made.
+Only GET requests to public ``/fapi/v1`` endpoints are made: exchangeInfo, ticker/24hr,
+premiumIndex (mark price + funding) and klines. ``fapi.binance.com`` returns HTTP 451 in some
+regions (e.g. the USA); BINANCE_URL can point to another reachable host of the same API.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -23,6 +25,13 @@ LEVERAGED_SUFFIXES = ('UP', 'DOWN', 'BULL', 'BEAR')
 
 class MarketError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class Quote:
+    price: float           # mark price (valuation, liquidation and fills)
+    funding_rate: float    # rate applied at the next funding settlement
+    next_funding: int      # ms; 0 when unknown
 
 
 def frame(rows: list[list[Any]]) -> pd.DataFrame:
@@ -81,10 +90,11 @@ class BinanceMarket:
         stamp, symbols = self._tradable
         if symbols and time.monotonic() - stamp < 6 * 3600:
             return symbols
-        info = await self._get('/exchangeInfo', permissions='SPOT')
+        info = await self._get('/exchangeInfo')
         symbols = {s['symbol'] for s in info.get('symbols', [])
                    if s.get('quoteAsset') == 'USDT' and s.get('status') == 'TRADING'
-                   and s.get('isSpotTradingAllowed', True) and s.get('baseAsset') not in EXCLUDED_BASES
+                   and s.get('contractType') == 'PERPETUAL' and s.get('underlyingType', 'COIN') == 'COIN'
+                   and s.get('baseAsset') not in EXCLUDED_BASES
                    and not str(s.get('baseAsset', '')).endswith(LEVERAGED_SUFFIXES)}
         if not symbols:
             raise MarketError('exchangeInfo boşdur')
@@ -92,7 +102,7 @@ class BinanceMarket:
         return symbols
 
     async def universe(self) -> list[tuple[str, float]]:
-        """Tradable USDT pairs ranked by 24h quote volume (top N, or the configured list)."""
+        """Tradable USDT perpetuals ranked by 24h quote volume (top N, or the configured list)."""
         tradable = await self._tradable_symbols()
         tickers = await self._get('/ticker/24hr')
         volume = {t['symbol']: float(t.get('quoteVolume') or 0) for t in tickers if t.get('symbol') in tradable}
@@ -101,16 +111,18 @@ class BinanceMarket:
                           key=lambda x: -x[1])
         return sorted(volume.items(), key=lambda x: -x[1])[:self.settings.top_n]
 
-    async def prices(self) -> dict[str, float]:
-        rows = await self._get('/ticker/price')
+    async def quotes(self) -> dict[str, Quote]:
+        rows = await self._get('/premiumIndex')
         out = {}
         for row in rows:
             try:
-                price = float(row['price'])
+                price = float(row['markPrice'])
+                rate = float(row.get('lastFundingRate') or 0)
+                nxt = int(row.get('nextFundingTime') or 0)
             except (KeyError, TypeError, ValueError):
                 continue
-            if price > 0:
-                out[row['symbol']] = price
+            if price > 0 and abs(rate) < 0.05:
+                out[row['symbol']] = Quote(price, rate, nxt)
         return out
 
     async def klines(self, symbol: str, limit: int) -> pd.DataFrame:

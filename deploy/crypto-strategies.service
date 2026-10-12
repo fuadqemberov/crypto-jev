@@ -1,5 +1,5 @@
 [Unit]
-Description=20 strategy virtual trading engine + dashboard (paper only)
+Description=20 strategy virtual USDT-M futures engine + dashboard (paper only)
 After=network-online.target
 Wants=network-online.target
 [Service]
