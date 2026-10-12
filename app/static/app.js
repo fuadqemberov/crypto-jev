@@ -1,101 +1,301 @@
 'use strict';
-const $=id=>document.getElementById(id);
-let selected='BTCUSDT',state=null,interval='15m',marketFilter='all',lastHistory=null,view=null,viewKey='',viewAt=0,viewBusy=false;
-const fmt=(x,d=2)=>x==null||!Number.isFinite(Number(x))?'—':Number(x).toLocaleString('en-US',{maximumFractionDigits:d});
-const clock=x=>x?new Date(x).toLocaleTimeString('az-AZ',{timeZone:'Asia/Baku',hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—';
-function node(tag,text,cls){const n=document.createElement(tag);if(text!=null)n.textContent=text;if(cls)n.className=cls;return n;}
-function badge(value){return node('span',value,'badge '+(value==='WAIT'||value==='KÖHNƏ'?'wait':value==='SHORT'?'short':''));}
-async function api(url,options){const r=await fetch(url,options);if(!r.ok){const d=await r.json().catch(()=>({}));throw Error(d.detail||`HTTP ${r.status}`);}return r.json();}
-function pnl(id,x){$(id).textContent=fmt(x);$(id).className=x==null?'':x>=0?'pass':'fail';}
-function emptyTable(id,cols,text){const tr=node('tr'),td=node('td',null,'empty-cell');td.colSpan=cols;td.append(node('span','▤','empty-icon'),node('span',text));tr.append(td);$(id).append(tr);}
-function execution(data){
- const connected=data?.connected===true;
- $('execution-status').textContent=connected?`${data.paused?'Yeni girişlər dayandırılıb':'Avtomatik girişlər aktivdir'} · ${clock(data.observed_at)} Bakı`:data?.error||'Freqtrade bağlantısı yoxdur.';
- $('pause-entries').disabled=!data?.bridge_configured;
- $('pause-entries').textContent=data?.paused?'Avtomatik girişləri başlat':'Yeni girişləri dayandır';
- $('wallet').textContent=connected?fmt(data.wallet):'—';
- // Wallet changes only when a trade closes; equity adds the open positions' unrealized PnL.
- const openPnl=connected?(data.positions||[]).reduce((sum,t)=>sum+(Number(t.profit_abs)||0),0):null;
- $('equity').textContent=connected&&data.wallet!=null?fmt(Number(data.wallet)+openPnl):'—';
- $('equity').className=openPnl==null?'':openPnl>=0?'pass':'fail';$('free-margin').textContent=connected?`${fmt(data.free)} / ${fmt(data.used)}`:'—';
- pnl('realized-pnl',connected?data.realized_pnl:null);pnl('total-pnl',connected?data.total_pnl:null);
- $('positions').replaceChildren();$('trades').replaceChildren();
- const positions=connected?data.positions||[]:[];$('position-count').textContent=positions.length;
- $('trade-summary').textContent=connected?`${data.wins||0} qazanc / ${data.losses||0} zərər`:'Qoşulmayıb';
- for(const t of positions){const tr=node('tr'),plan=(t.enter_tag||'').split(':');[t.pair,t.is_short?'SHORT':'LONG',fmt(t.leverage,0)+'×',fmt(t.open_rate,6),fmt(t.current_rate,6),fmt(t.stake_amount),fmt(t.profit_abs),`${fmt(t.stop_loss_abs,6)} / ${plan.length>=4?fmt(Number(plan[3]),6):'—'}`,fmt(t.funding_fees,4)].forEach((v,i)=>tr.append(node('td',v,i===6?(t.profit_abs>=0?'pass':'fail'):i===1?(t.is_short?'fail':'pass'):'')));$('positions').append(tr);}
- if(!positions.length)emptyTable('positions',9,connected?'Açıq mövqe yoxdur · uyğun JEV siqnalı gözlənilir':'Freqtrade bağlantısı gözlənilir');
- for(const t of connected?data.trades||[]:[]){if(t.is_open)continue;const tr=node('tr');[t.pair,t.is_short?'SHORT':'LONG',fmt(t.open_rate,6),fmt(t.close_rate,6),fmt(t.close_profit_abs),fmt(t.funding_fees,4),t.exit_reason||'—'].forEach((v,i)=>tr.append(node('td',v,i===4?(t.close_profit_abs>=0?'pass':'fail'):'')));$('trades').append(tr);}
- if(!$('trades').children.length)emptyTable('trades',7,'Bağlanmış əməliyyat yoxdur');
+/* 20 strategy virtual trading dashboard. Read-only: it only GETs /api/* and never changes accounts. */
+
+const $ = (id) => document.getElementById(id);
+const REFRESH_MS = 10000;
+const state = { overview: null, curves: null, curvesAt: 0, detail: null, view: '', sort: { col: 'rank', dir: 1 }, charts: {}, clockOffset: 0 };
+
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+const money = (v, sign = false) => isNum(v) ? (sign && v > 0 ? '+' : '') + v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+const pct = (v, sign = true) => isNum(v) ? (sign && v > 0 ? '+' : '') + v.toFixed(2) + '%' : '—';
+const num = (v, d = 2) => isNum(v) ? v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—';
+const cls = (v) => (isNum(v) && v > 0 ? 'pos' : isNum(v) && v < 0 ? 'neg' : '');
+const pf = (v) => v === 'inf' ? '∞' : isNum(v) ? v.toFixed(2) : '—';
+function price(v) {
+  if (!isNum(v)) return '—';
+  const d = v >= 1000 ? 2 : v >= 1 ? 4 : v >= 0.01 ? 6 : 8;
+  return v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 }
-function direction(row){return row.jev_decision||row.ai?.answers?.direction?.choice||'—';}
-function executionReason(row){const labels={risk_error:'Risk ölçüləndirməsi mümkün deyil',ttl:'Siqnalın vaxtı keçib',telemetry:'İcra məlumatı yoxdur',heartbeat:'İcra heartbeat-i yoxdur',pause:'Yeni girişlər dayandırılıb',daily_loss:'Gündəlik zərər limiti',storage_error:'Disk xətası',schema:'Siqnal formatı etibarsızdır',cooldown:'Təkrar giriş fasiləsi',funding:'Funding yoxlaması keçilmədi',levels:'Giriş / SL / TP planı yoxdur',discovery:'Bazar siyahısı yenilənmədi',worker_error:'Skan xətası',demo:'Demo rejimi',analysis_error:'Analiz xətası'};return (row.execution_blocks||[]).map(c=>labels[c]||c).join(' · ');}
-function reason(row){if(row.error)return row.error;if(row.ai_error)return row.ai_error;if(!row.observed_at)return 'Analiz növbəsində';if(row.stale)return `Yenilənmə növbəsində · ${Math.floor((row.analysis_age_seconds??(Date.now()-row.observed_at)/1000)/60)} dəq əvvəl`;return executionReason(row)||row.reasons?.[0]||'Bridge girişə buraxıb; Freqtrade yekun yoxlamanı edir';}
-function allRows(){const rows=new Map((state?.rows||[]).map(r=>[r.symbol,r]));for(const s of state?.market_symbols||[])if(!rows.has(s))rows.set(s,{symbol:s,decision:'WAIT'});return [...rows.values()];}
-function selectedRow(){return allRows().find(r=>r.symbol===selected)||{symbol:selected,decision:'WAIT'};}
-function renderMarkets(){
- const query=$('market-search').value.trim().toUpperCase();let rows=allRows().filter(r=>r.symbol.includes(query));
- if(marketFilter==='ready')rows=rows.filter(r=>r.execution_ready===true);
- if(marketFilter==='direction')rows=rows.filter(r=>['LONG','SHORT'].includes(direction(r)));
- rows.sort((a,b)=>a.symbol.localeCompare(b.symbol));const scroll=$('markets').scrollTop;$('markets').replaceChildren();
- for(const row of rows){const b=node('button',null,'market'+(row.symbol===selected?' active':''));b.setAttribute('aria-label',row.symbol);const left=node('span',row.symbol);left.append(node('small',`JEV ${direction(row)}`,direction(row)==='LONG'?'pass':direction(row)==='SHORT'?'fail':''));const right=node('span',fmt(row.mark,6),'market-right');const status=row.stale?'Yenilənir':!row.observed_at?'Növbədə':row.execution_action||'WAIT';right.append(node('small',status,status==='LONG'?'pass':status==='SHORT'?'fail':''));b.title=reason(row);b.append(left,right);b.onclick=()=>selectMarket(row.symbol);$('markets').append(b);}
- if(!rows.length)$('markets').append(node('p','Uyğun bazar tapılmadı.','empty'));$('markets').scrollTop=scroll;$('visible-markets').textContent=`${rows.length} bazar`;
+function when(ms) {
+  if (!isNum(ms)) return '—';
+  return new Date(ms).toLocaleString('az-AZ', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
 }
-function selectMarket(symbol){selected=symbol;view=null;viewKey='';viewAt=0;renderMarkets();detail(selectedRow());clearBook('Yeni bazar yüklənir');drawChart([]);pollView();}
-function detail(row){
- $('symbol').textContent=row.symbol;$('jev-direction').textContent=direction(row);$('jev-direction').className=direction(row)==='LONG'?'pass':direction(row)==='SHORT'?'fail':'';
- $('decision').replaceWith(Object.assign(badge(row.stale?'KÖHNƏ':row.execution_action||'WAIT'),{id:'decision'}));
- $('decision-large').textContent=direction(row)==='—'?'Növbədə':direction(row);$('decision-large').className=direction(row)==='LONG'?'pass':direction(row)==='SHORT'?'fail':'muted';$('decision-description').textContent=reason(row);
- $('indicators').replaceChildren();$('ai').replaceChildren();$('reasons').replaceChildren();$('rules').replaceChildren();$('levels').replaceChildren();
- for(const message of [...new Set([row.error,row.ai_error,row.stale?'Analiz köhnədir; yeni giriş üçün təzə yoxlama gözlənilir.':null,executionReason(row),...(row.reasons||[])].filter(Boolean))])$('reasons').append(node('p',message));
- if(!$('reasons').children.length)$('reasons').append(node('p',row.observed_at?'Risk filtrləri keçilib. İcra cari qiyməti, balansı və təkrar girişləri ayrıca yoxlayır.':'Bu coin analiz növbəsindədir.'));
- for(const [tf,f] of Object.entries(row.frames||{})){const tr=node('tr');[tf,f.trend,fmt(f.rsi),fmt(f.macd_hist,6),fmt(f.atr_pct),fmt(f.support,6),fmt(f.resistance,6)].forEach(v=>tr.append(node('td',v)));$('indicators').append(tr);}
- if(!$('indicators').children.length)emptyTable('indicators',7,'Bu coin üçün analiz hələ tamamlanmayıb');
- if(row.levels){const l=row.levels;[`Giriş ${fmt(l.entry,6)}`,`SL ${fmt(l.stop,6)}`,`TP ${fmt(l.target,6)}`,`Xalis R:R ${fmt(l.net_rr)}`,`Risk leverage ${row.planned_leverage?row.planned_leverage+'×':'—'}`].forEach(v=>$('levels').append(node('span',v)));}
- const names={direction:'İstiqamət',momentum:'Momentum',regime:'Bazar rejimi',risk:'Risk',driver:'Əsas kontekst',position_action:'Mövqe qərarı'};
- if(!row.ai)$('ai').append(node('p',row.ai_error||'Seçilmiş coin üçün JEV analizi gözlənilir.','muted'));
- for(const [key,a] of Object.entries(row.ai?.answers||{})){if(key==='leverage')continue;const card=node('div',null,'ai-card');card.append(node('small',names[key]||key),node('strong',a.choice));const bar=node('progress');bar.max=1;bar.value=a.confidence;bar.setAttribute('aria-label',`${names[key]} confidence`);card.append(bar,node('small',`Confidence ${fmt(a.confidence*100)}%`));card.title=Object.entries(a.probabilities).map(([k,p])=>`${k}: ${fmt(p*100,1)}%`).join(' · ');$('ai').append(card);}
- for(const r of (row.guards||[])){const div=node('div',null,'rule');div.append(node('span',r.label),node('span',r.passed?'Keçdi':'Keçmədi',r.passed?'pass':'fail'));$('rules').append(div);}
- if(!view||view.symbol!==selected){$('price').textContent=fmt(row.mark,6);$('mark-price').textContent=fmt(row.mark,6);$('funding').textContent=row.funding_rate==null?'—':`${fmt(row.funding_rate*100,4)}%`;if(row.candles?.length&&interval==='15m'){drawChart(row.candles);$('quote-state').textContent='Son analiz qiyməti';$('source').textContent=row.source||'—';}}
+function duration(ms) {
+  if (!isNum(ms) || ms < 0) return '—';
+  const h = ms / 3600000;
+  return h >= 48 ? (h / 24).toFixed(1) + ' gün' : h >= 1 ? h.toFixed(1) + ' saat' : Math.round(ms / 60000) + ' dəq';
 }
-function svg(tag,attrs,text){const e=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v] of Object.entries(attrs))e.setAttribute(k,v);if(text!=null)e.textContent=text;return e;}
-function drawChart(bars){
- const el=$('chart');el.replaceChildren();$('chart-empty').hidden=bars.length>0;if(!bars.length)return;
- const w=820,top=18,bottom=282,volTop=310,volBottom=365;let lo=Math.min(...bars.map(b=>Number(b.low))),hi=Math.max(...bars.map(b=>Number(b.high)));const padding=(hi-lo)*.08||hi*.002||1;lo-=padding;hi+=padding;const y=p=>bottom-(p-lo)/(hi-lo)*(bottom-top),step=w/bars.length,body=Math.max(2,step*.62),maxVol=Math.max(...bars.map(b=>Number(b.volume)),1);
- for(let i=0;i<6;i++){const v=hi-(hi-lo)*i/5,py=y(v);el.append(svg('line',{x1:0,x2:w,y1:py,y2:py,class:'grid'}),svg('text',{x:w+8,y:py+4,class:'axis'},fmt(v,6)));}
- for(let i=0;i<bars.length;i++){const b=bars[i],x=i*step+step/2,up=b.close>=b.open,cls=up?'candle-up':'candle-down',py=Math.min(y(b.open),y(b.close)),height=Math.max(1,Math.abs(y(b.open)-y(b.close)));const wick=svg('line',{x1:x,x2:x,y1:y(b.high),y2:y(b.low),class:cls,'stroke-width':1});const rect=svg('rect',{x:x-body/2,y:py,width:body,height,class:cls,'stroke-width':0});rect.append(svg('title',{},`O ${b.open} H ${b.high} L ${b.low} C ${b.close}`));el.append(wick,rect,svg('rect',{x:x-body/2,y:volBottom-b.volume/maxVol*(volBottom-volTop),width:body,height:Math.max(1,b.volume/maxVol*(volBottom-volTop)),class:cls,opacity:.4,'stroke-width':0}));if(i%20===0){el.append(svg('line',{x1:x,x2:x,y1:0,y2:volBottom,class:'grid'}),svg('text',{x,y:384,class:'axis','text-anchor':'middle'},clock(b.time||b.open_time||b.close_time)));}}
- const last=bars[bars.length-1],color=last.close>=last.open?'#0ecb81':'#f6465d',ly=y(last.close);el.append(svg('line',{x1:0,x2:w,y1:ly,y2:ly,stroke:color,'stroke-dasharray':'3 3',opacity:.7}),svg('rect',{x:w,y:ly-9,width:80,height:19,fill:color}),svg('text',{x:w+5,y:ly+4,fill:'#0b0e11','font-size':10},fmt(last.close,6)));
- $('chart-ohlc').textContent=`O ${fmt(last.open,5)} H ${fmt(last.high,5)} L ${fmt(last.low,5)} C ${fmt(last.close,5)}`;
+const color = (i, n = 20) => `hsl(${Math.round(i * 360 / n)}, 72%, 60%)`;
+
+async function getJSON(url) {
+  const r = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store', credentials: 'same-origin' });
+  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+  return r.json();
 }
-function clearBook(message){$('asks').replaceChildren();$('bids').replaceChildren();$('book-price').textContent='—';$('spread').textContent='—';$('book-status').textContent=message;}
-function renderView(data){
- view=data;$('price').textContent=fmt(data.mark,6);$('mark-price').textContent=fmt(data.mark,6);$('book-price').textContent=fmt(data.mark,6);$('funding').textContent=`${fmt(data.funding_rate*100,4)}%`;$('quote-state').textContent=`Canlı · ${clock(data.observed_at)}`;$('source').textContent='Binance USD-M';drawChart(data.candles);
- for(const [id,raw,cls] of [['asks',data.asks,'ask'],['bids',data.bids,'bid']]){let cumulative=0;const list=raw.slice(0,8).map(([price,qty])=>({price:Number(price),qty:Number(qty),total:cumulative+=Number(qty)})),max=cumulative||1;$ (id).replaceChildren();for(const r of id==='asks'?[...list].reverse():list){const div=node('div',null,`book-row ${cls}`);div.style.setProperty('--depth',`${r.total/max*100}%`);div.append(node('span',fmt(r.price,6)),node('span',fmt(r.qty,2)),node('span',fmt(r.total,2)));$(id).append(div);}}
- const ask=Number(data.asks[0]?.[0]),bid=Number(data.bids[0]?.[0]),spread=(ask-bid)/((ask+bid)/2)*10000;$('spread').textContent=`${fmt(spread,2)} bps`;$('book-status').textContent=`Binance · ${clock(data.observed_at)} Bakı`;$('market-meta').replaceChildren(...[`Spread ${fmt(spread)} bps`,`Funding ${fmt(data.funding_rate*100,4)}%`,`${interval} · son şam davam edir`].map(t=>node('span',t)));
+
+/* ---------- routing ---------- */
+function route() {
+  const m = location.hash.match(/^#\/s\/([a-z0-9_]+)$/);
+  state.view = m ? m[1] : '';
+  $('view-overview').hidden = !!state.view;
+  $('view-strategy').hidden = !state.view;
+  state.detail = null;
+  renderNav();
+  refresh(true);
+  window.scrollTo(0, 0);
 }
-async function pollView(){
- if(viewBusy||!state)return;const symbol=selected,tf=interval,key=`${symbol}:${tf}`;if(viewKey===key&&Date.now()-viewAt<5000)return;viewBusy=true;
- try{const data=await api(`/api/market/${encodeURIComponent(symbol)}?interval=${tf}`);if(selected===symbol&&interval===tf){viewKey=key;viewAt=Date.now();renderView(data);}}
- catch(e){if(selected===symbol&&interval===tf){view=null;clearBook(e.message);$('quote-state').textContent='Canlı məlumat alınmadı';$('price').textContent='—';$('mark-price').textContent='—';$('funding').textContent='—';}}
- finally{viewBusy=false;}
+function ordered() {
+  return state.overview ? [...state.overview.strategies].sort((a, b) => a.order - b.order) : [];
 }
-async function history(){try{const rows=await api('/api/history');$('history').replaceChildren();for(const r of rows.slice(0,40)){const tr=node('tr');[clock(r.observed_at),r.symbol,direction(r),r.decision,r.ai_error||r.error||r.reasons?.[0]||'Filtrlər keçildi'].forEach(v=>tr.append(node('td',v)));$('history').append(tr);}if(!rows.length)emptyTable('history',5,'Analiz tarixçəsi boşdur');}catch(e){$('notice').textContent=e.message;}}
-function renderOperations(){
- const m=state.metrics||{}, c=state.cache||{}, b=state.bridge||{};
- const labels={discovery:'Bazar siyahısı yenilənmədi',worker_error:'Skan prosesi xətası',ai_unavailable:'AI cavabı yoxdur',jev_wait:'JEV gözləmə seçdi',jev_assessment:'JEV təsdiqi çatmır',volatility:'Volatility limiti',price_gap:'Qiymət fərqi',rsi:'RSI limiti',telemetry:'İcra məlumatı yoxdur',heartbeat:'Heartbeat yoxdur',pause:'Girişlər dayandırılıb',storage_error:'Disk xətası',demo:'Demo rejimi',daily_loss:'Gündəlik zərər limiti',ttl:'Siqnal köhnəlib',analysis_error:'Analiz xətası',cooldown:'Təkrar giriş fasiləsi',funding:'Funding məlumatı yoxdur',rr:'R:R aşağıdır',spread:'Spread yüksəkdir',slippage:'Qiymət dəyişib',margin:'Margin limiti',duplicate:'Təkrar siqnal',risk_error:'Risk məlumatı yoxlanmadı',accepted:'Giriş təsdiqləndi',bridge:'Bridge xətası',schema:'Yanlış siqnal strukturu'};
- const root=$('operations');root.replaceChildren();
- const values=[['Skan profili',state.performance_profile],['Prioritet bazarlar',state.priority_symbols?.length||0],['Tam skan müddəti',`${fmt(m.scan_seconds?.radar)} san`],['Prioritet dövrü',`${fmt(m.scan_seconds?.priority)} san`],['Analiz p50 / p95',`${fmt(m.symbol_p50_ms)} / ${fmt(m.symbol_p95_ms)} ms`],['AI cache hit',`${fmt((c.hit_rate||0)*100)}%`],['Bridge',b.health==='healthy'?'Sağlam':'Əlaqə gözlənilir'],['Bridge gecikməsi',b.bridge_lag_ms==null?'—':`${fmt(b.bridge_lag_ms)} ms`]];
- for(const [label,value] of values){const line=node('div',null,'account-line');line.append(node('span',label),node('b',String(value??'—')));root.append(line);}
- $('bridge-blocks').textContent=(b.blocks||[]).map(k=>labels[k]||k).join(' · ')||'Yeni girişlər üçün bridge hazırdır';
- const reasons=$('rejection-metrics');reasons.replaceChildren();
- for(const [name,counts] of [['Hazırkı siqnallar',b.rejections],['İcra sayğacları',b.executor_rejections]])for(const [key,value] of Object.entries(counts||{})){if(value)reasons.append(node('span',`${name} · ${labels[key]||key}: ${value}`));}
+function step(delta) {
+  const list = ordered();
+  if (!list.length) return;
+  const i = list.findIndex((s) => s.key === state.view);
+  const next = list[(i + delta + list.length) % list.length];
+  location.hash = '#/s/' + next.key;
 }
-async function refresh(){try{state=await api('/api/status');execution(state.execution);renderOperations();$('notice').textContent=[state.demo?'DEMO — sintetik məlumat':!state.ai_configured?'JEV API açarı əlavə edilməyib.':null,state.discovery_error,state.jev_health?.cooldown_seconds>0?`JEV fasiləsi: ${state.jev_health.cooldown_seconds} s · ${state.jev_health.last_error_code||'upstream'}`:null,state.priority_budget_exceeded?'Prioritet skan TTL büdcəsini aşır; watchlist/paralellik ayarlarını yoxlayın.':null,state.storage_error?'Tarixçəni diskə yazmaq mümkün olmadı.':null].filter(Boolean).join(' ');$('mode').textContent=state.demo?'DEMO':state.ai_configured?'● JEV ONLAYN':'JEV OFFLAYN';$('count').textContent=state.market_count??state.rows.length;$('signals').textContent=state.actionable_count??0;$('threshold').textContent=`${fmt(state.min_confidence*100)}%`;$('updated').textContent=clock(state.last_scan);$('scan-state').textContent=state.scanning?`Analiz ${state.scan_completed??state.rows.length} / ${state.market_count??state.rows.length}`:`Növbəti skan ${clock(state.next_scan)}`;$('model').textContent=state.model;$('scan').disabled=state.scanning;renderMarkets();detail(selectedRow());if(lastHistory!==state.last_scan){lastHistory=state.last_scan;await history();}await pollView();}
- catch(e){execution(null);$('operations').replaceChildren();$('bridge-blocks').textContent='Server bağlantısı yoxdur — sistem statusu köhnədir';$('rejection-metrics').replaceChildren();$('notice').textContent='Server bağlantısı yoxdur. Qiymətlər cari deyil.';$('mode').textContent='OFFLAYN';$('decision').textContent='OFFLAYN';$('levels').replaceChildren();$('price').textContent='—';$('mark-price').textContent='—';$('funding').textContent='—';$('quote-state').textContent='Bağlantı yoxdur';clearBook('Bağlantı yoxdur');$('scan').disabled=false;}}
-$('market-search').addEventListener('input',renderMarkets);
-document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{marketFilter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('active',x===b));renderMarkets();});
-document.querySelectorAll('[data-interval]').forEach(b=>b.onclick=()=>{interval=b.dataset.interval;view=null;viewKey='';document.querySelectorAll('[data-interval]').forEach(x=>x.classList.toggle('active',x===b));drawChart([]);pollView();});
-document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.tab-content').forEach(x=>x.hidden=x.id!==b.dataset.tab);if(b.dataset.tab==='history-pane')history();});
-$('scan').onclick=async()=>{try{$('scan').disabled=true;await api('/api/scan',{method:'POST',headers:{'X-Crypto-Jev':'1'}});await refresh();}catch(e){$('notice').textContent=e.message;$('scan').disabled=false;}};
-$('history-refresh').onclick=history;
-$('pause-entries').onclick=async()=>{try{await api('/api/execution/'+(state?.execution?.paused?'resume':'pause'),{method:'POST',headers:{'X-Crypto-Jev':'1'}});await refresh();}catch(e){$('execution-status').textContent=e.message;}};
-(async function poll(){await refresh();setTimeout(poll,5000);})();history();
+
+/* ---------- status & nav ---------- */
+function renderStatus(st) {
+  state.clockOffset = st.now - Date.now();
+  const mode = $('mode');
+  mode.textContent = st.mode === 'demo' ? 'DEMO (sintetik bazar)' : 'CANLI BAZAR · VİRTUAL HESAB';
+  mode.className = 'mode' + (st.mode === 'demo' ? ' demo' : '');
+  $('st-tf').textContent = st.timeframe;
+  $('st-universe').textContent = st.universe ? `${st.universe}${st.symbols === 'ALL' ? ' (top ' + st.top_n + ')' : ''}` : '—';
+  $('st-candle').textContent = when(st.last_candle);
+  const age = st.last_price_at ? Math.round((Date.now() - st.last_price_at) / 1000) : null;
+  $('st-price').textContent = age === null ? '—' : `${age} s əvvəl`;
+  $('notice').textContent = st.error ? `Bazar məlumatı xətası: ${st.error.message} — növbəti dövrdə yenidən cəhd edilir.` :
+    (!st.last_candle ? 'İlk bağlanmış şam gözlənilir / yüklənir… Hesablar 2000 $ ilə başlayır; mövqelər yalnız təzə siqnal gələndə açılır.' : '');
+  state.status = st;
+  tickClock();
+}
+function tickClock() {
+  const st = state.status;
+  if (!st) return;
+  if (st.mode === 'demo') { $('st-next').textContent = when(st.next_candle) + ' (demo saatı)'; return; }
+  const left = Math.max(0, st.next_candle - (Date.now() + state.clockOffset));
+  const m = Math.floor(left / 60000), s = Math.floor(left / 1000) % 60;
+  $('st-next').textContent = `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function renderNav() {
+  const list = ordered();
+  $('nav-list').innerHTML = list.map((s) => `
+    <a class="nav-item${state.view === s.key ? ' active' : ''}" href="#/s/${esc(s.key)}">
+      <span class="nav-rank">#${s.rank}</span>
+      <span class="nav-name">${esc(s.name)}<small>${esc(s.family)} · ${s.open_positions} mövqe · ${s.trades} əməliyyat</small></span>
+      <span class="nav-ret ${cls(s.return_pct)}">${pct(s.return_pct)}</span>
+    </a>`).join('');
+  document.querySelector('.nav-overview').classList.toggle('active', !state.view);
+  const sel = $('nav-select');
+  sel.innerHTML = `<option value="">★ Ümumi baxış (müqayisə)</option>` + list.map((s) =>
+    `<option value="${esc(s.key)}">${s.order}. ${esc(s.name)} — ${pct(s.return_pct)}</option>`).join('');
+  sel.value = state.view;
+}
+
+/* ---------- charts ---------- */
+function lineChart(id, datasets, money$ = true) {
+  if (typeof Chart === 'undefined') return;
+  const xs = datasets.flatMap((d) => d.data.map((p) => p.x));
+  const [xmin, xmax] = xs.length ? [Math.min(...xs), Math.max(...xs)] : [undefined, undefined];
+  const old = state.charts[id];
+  if (old) {
+    old.data.datasets = datasets;
+    Object.assign(old.options.scales.x, { min: xmin, max: xmax });
+    old.update('none');
+    return;
+  }
+  state.charts[id] = new Chart($(id), {
+    type: 'line',
+    data: { datasets },
+    options: {
+      animation: false, responsive: true, maintainAspectRatio: false, parsing: false, normalized: true,
+      interaction: { mode: 'nearest', intersect: false },
+      elements: { point: { radius: 0, hitRadius: 6 }, line: { borderWidth: 1.6, tension: 0 } },
+      scales: {
+        x: { type: 'linear', min: xmin, max: xmax, ticks: { color: '#848e9c', maxTicksLimit: window.innerWidth < 760 ? 4 : 8, maxRotation: 0, callback: (v) => when(v) }, grid: { color: '#222830' } },
+        y: { ticks: { color: '#848e9c', callback: (v) => money$ ? '$' + Number(v).toLocaleString('en-US') : v }, grid: { color: '#222830' } },
+      },
+      plugins: {
+        legend: { position: 'bottom', labels: { color: '#c9ced6', boxWidth: 10, boxHeight: 2, font: { size: 11 } } },
+        tooltip: { callbacks: { title: (items) => when(items[0].parsed.x), label: (c) => `${c.dataset.label}: ${money(c.parsed.y)}` } },
+      },
+    },
+  });
+}
+const series = (pts) => (pts || []).map(([x, y]) => ({ x, y }));
+
+/* ---------- overview ---------- */
+const COLUMNS = [
+  ['rank', '#', (s) => s.rank],
+  ['name', 'Strategiya', (s) => `<b>${esc(s.name)}</b><br><span class="muted">${esc(s.family)}</span>`, 'l'],
+  ['equity', 'Balans', (s) => money(s.equity)],
+  ['return_pct', 'Gəlir', (s) => `<span class="${cls(s.return_pct)}">${pct(s.return_pct)}</span>`],
+  ['realized', 'Realizə PnL', (s) => `<span class="${cls(s.realized)}">${money(s.realized, true)}</span>`],
+  ['unrealized', 'Açıq PnL', (s) => `<span class="${cls(s.unrealized)}">${money(s.unrealized, true)}</span>`],
+  ['trades', 'Əməliyyat', (s) => s.trades],
+  ['win_rate', 'Uduş %', (s) => isNum(s.win_rate) ? s.win_rate.toFixed(1) + '%' : '—'],
+  ['profit_factor', 'Mənfəət faktoru', (s) => pf(s.profit_factor)],
+  ['max_dd_pct', 'Maks. geriləmə', (s) => `<span class="neg">${isNum(s.max_dd_pct) && s.max_dd_pct > 0 ? '-' + s.max_dd_pct.toFixed(2) + '%' : '0.00%'}</span>`],
+  ['open_positions', 'Açıq mövqe', (s) => `${s.open_positions}/${state.status?.max_positions ?? ''}`],
+  ['exposure_pct', 'Bazarda', (s) => pct(s.exposure_pct, false)],
+];
+const sortValue = (s, col) => col === 'profit_factor' ? (s[col] === 'inf' ? 1e9 : s[col] ?? -1) : col === 'name' ? s.name : (s[col] ?? -1e9);
+
+function renderOverview(ov) {
+  const rows = ov.strategies;
+  const best = rows[0], worst = rows[rows.length - 1];
+  const avg = rows.reduce((a, s) => a + s.return_pct, 0) / rows.length;
+  const total = rows.reduce((a, s) => a + s.equity, 0);
+  const winners = rows.filter((s) => s.return_pct > 0).length;
+  const b = ov.benchmark;
+  const beat = b ? rows.filter((s) => s.return_pct > b.return_pct).length : null;
+  $('ov-kpis').innerHTML = [
+    ['Ən yaxşı strategiya', best.name, `<span class="${cls(best.return_pct)}">${pct(best.return_pct)}</span> · ${money(best.equity)}`],
+    ['Ən zəif strategiya', worst.name, `<span class="${cls(worst.return_pct)}">${pct(worst.return_pct)}</span> · ${money(worst.equity)}`],
+    ['Orta gəlir (20 hesab)', `<span class="${cls(avg)}">${pct(avg)}</span>`, `cəmi ${money(total)} / ${money(rows.length * ov.status.capital)}`],
+    ['Mənfəətdə olan', `${winners} / ${rows.length}`, 'strategiya'],
+    ['Benchmark', b ? `<span class="${cls(b.return_pct)}">${pct(b.return_pct)}</span>` : '—', b ? `${esc(b.symbol)} al və saxla · ${beat} strategiya qabaqdadır` : 'ilk şamdan sonra'],
+    ['Cəmi əməliyyat', rows.reduce((a, s) => a + s.trades, 0), `${rows.reduce((a, s) => a + s.open_positions, 0)} açıq mövqe`],
+  ].map(([t, v, sub]) => `<div class="kpi"><small>${t}</small><strong>${v.toString().startsWith('<') ? v : esc(v)}</strong><span>${sub}</span></div>`).join('');
+
+  const { col, dir } = state.sort;
+  const sorted = [...rows].sort((a, b2) => {
+    const x = sortValue(a, col), y = sortValue(b2, col);
+    return (typeof x === 'string' ? x.localeCompare(y) : x - y) * dir;
+  });
+  const head = '<thead><tr>' + COLUMNS.map(([k, label, , align]) =>
+    `<th class="sortable${align ? ' ' + align : ''}${k === col ? ' sorted' : ''}" data-col="${k}">${label}${k === col ? (dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('') + '</tr></thead>';
+  const body = sorted.map((s) => `<tr class="link" data-key="${esc(s.key)}">` +
+    COLUMNS.map(([, , f, align]) => `<td${align ? ` class="${align}"` : ''}>${f(s)}</td>`).join('') + '</tr>').join('');
+  const benchRow = b ? `<tr class="bench"><td>—</td><td class="l">Benchmark: ${esc(b.symbol)} al və saxla</td><td>${money(b.equity)}</td><td>${pct(b.return_pct)}</td>${'<td></td>'.repeat(COLUMNS.length - 4)}</tr>` : '';
+  $('ov-table').innerHTML = head + '<tbody>' + body + benchRow + '</tbody>';
+
+  $('ov-events').innerHTML = '<thead><tr><th>Vaxt</th><th class="l">Strategiya</th><th class="l">Əməliyyat</th><th class="l">Coin</th><th>Qiymət</th><th>Nəticə</th><th>%</th></tr></thead><tbody>' +
+    (ov.events.length ? ov.events.map((e) => `<tr class="link" data-key="${esc(e.key)}"><td>${when(e.ts)}</td><td class="l">${esc(e.name)}</td>
+      <td class="l"><span class="side ${e.side === 'BUY' ? 'buy' : 'sell'}">${e.side === 'BUY' ? 'ALIŞ' : 'SATIŞ'}</span></td><td class="l">${esc(e.symbol)}</td>
+      <td>${price(e.price)}</td><td class="${cls(e.pnl)}">${isNum(e.pnl) ? money(e.pnl, true) : ''}</td><td class="${cls(e.ret)}">${isNum(e.ret) ? pct(e.ret * 100) : ''}</td></tr>`).join('')
+      : '<tr><td colspan="7" class="empty">Hələ əməliyyat yoxdur — strategiyalar yeni siqnal gözləyir.</td></tr>') + '</tbody>';
+}
+
+function renderCurves(curves) {
+  const list = ordered();
+  const datasets = list.map((s, i) => ({ label: s.name, data: series(curves[s.key]), borderColor: color(i), backgroundColor: color(i) }));
+  if (curves._benchmark && curves._benchmark.length) {
+    datasets.push({ label: 'Benchmark (al və saxla)', data: series(curves._benchmark), borderColor: '#9aa3ae', backgroundColor: '#9aa3ae', borderDash: [6, 4], borderWidth: 2 });
+  }
+  lineChart('ov-chart', datasets);
+}
+
+/* ---------- strategy section ---------- */
+function renderDetail(d) {
+  const s = d.summary;
+  $('s-name').textContent = `${s.order}. ${s.name}`;
+  $('s-family').textContent = s.family;
+  $('s-rank').textContent = `· reytinq #${s.rank} / 20 · başlanğıc ${when(s.started_at)}`;
+  $('s-rules').textContent = d.rules;
+  document.title = `${s.name} — 20 Strategiya`;
+  const kpis = [
+    ['Balans', money(s.equity), `<span class="${cls(s.return_pct)}">${pct(s.return_pct)}</span> (başlanğıc ${money(s.capital)})`],
+    ['Realizə olunmuş PnL', `<span class="${cls(s.realized)}">${money(s.realized, true)}</span>`, 'bağlanmış əməliyyatlar'],
+    ['Açıq PnL', `<span class="${cls(s.unrealized)}">${money(s.unrealized, true)}</span>`, `${s.open_positions} açıq mövqe`],
+    ['Nağd USDT', money(s.cash), `bazarda ${pct(s.exposure_pct, false)}`],
+    ['Əməliyyat sayı', s.trades, `${s.wins} uduş · ${s.trades - s.wins} itki`],
+    ['Uduş faizi', isNum(s.win_rate) ? s.win_rate.toFixed(1) + '%' : '—', 'bağlanmış əməliyyatlar'],
+    ['Mənfəət faktoru', pf(s.profit_factor), 'ümumi qazanc / ümumi itki'],
+    ['Maks. geriləmə', s.max_dd_pct > 0 ? `<span class="neg">-${s.max_dd_pct.toFixed(2)}%</span>` : '0.00%', 'pik balansdan düşüş'],
+    ['Orta əməliyyat', `<span class="${cls(s.avg_trade_pct)}">${pct(s.avg_trade_pct)}</span>`, `ən yaxşı ${pct(s.best_trade_pct)} · ən pis ${pct(s.worst_trade_pct)}`],
+    ['Orta saxlama', isNum(s.avg_hold_hours) ? duration(s.avg_hold_hours * 3600000) : '—', 'mövqe müddəti'],
+    ['Ödənilmiş komissiya', money(s.fees), 'bağlanmış əməliyyatlar üzrə'],
+  ];
+  $('s-kpis').innerHTML = kpis.map(([t, v, sub]) => `<div class="kpi"><small>${t}</small><strong>${v}</strong><span>${sub}</span></div>`).join('');
+
+  const ds = [{ label: s.name, data: series(d.equity), borderColor: '#f0b90b', backgroundColor: '#f0b90b', borderWidth: 2 }];
+  if (d.benchmark.length) ds.push({ label: `Benchmark: ${d.benchmark_symbol} al və saxla`, data: series(d.benchmark), borderColor: '#9aa3ae', backgroundColor: '#9aa3ae', borderDash: [6, 4] });
+  lineChart('s-chart', ds);
+  $('s-bench-note').textContent = d.benchmark_symbol ? `müqayisə: ${d.benchmark_symbol}` : '';
+
+  const sig = d.signals || {};
+  const held = new Set(d.positions.map((p) => p.symbol));
+  const chips = (arr, kind) => arr && arr.length ? `<div class="chips">${arr.map((x) => `<span class="chip ${kind}${kind === '' && held.has(x) ? ' held' : ''}">${esc(x)}</span>`).join('')}</div>` : '<div class="muted">—</div>';
+  $('s-sig-candle').textContent = sig.candle ? `şam: ${when(sig.candle)}` : 'hələ şam işlənməyib';
+  $('s-signals').innerHTML = `
+    <h3>Alındı (yeni siqnal)</h3>${chips(sig.entries, 'buy')}
+    <h3>Satıldı (çıxış siqnalı)</h3>${chips(sig.exits, 'sell')}
+    <h3>Boş slot / nağd çatmadığı üçün buraxıldı</h3>${chips(sig.skipped, 'skip')}
+    <h3>Mövqe rejimi aktiv olan coinlər (${(sig.active || []).length}${sig.evaluated ? ' / ' + sig.evaluated : ''}) — sarı çərçivə: hesabda var</h3>${chips(sig.active, '')}`;
+
+  $('s-pos-note').textContent = `${d.positions.length} / ${d.status.max_positions} slot`;
+  $('s-positions').innerHTML = '<thead><tr><th>Coin</th><th>Açılış</th><th>Giriş qiyməti</th><th>Cari qiymət</th><th>Miqdar</th><th>Qoyulan</th><th>Dəyər (satış)</th><th>PnL</th><th>%</th></tr></thead><tbody>' +
+    (d.positions.length ? d.positions.map((p) => `<tr><td><b>${esc(p.symbol)}</b></td><td>${when(p.opened_at)}</td><td>${price(p.entry_price)}</td><td>${price(p.price)}</td>
+      <td>${num(p.qty, p.qty >= 100 ? 2 : 6)}</td><td>${money(p.cost)}</td><td>${money(p.value)}</td><td class="${cls(p.pnl)}">${money(p.pnl, true)}</td><td class="${cls(p.ret_pct)}">${pct(p.ret_pct)}</td></tr>`).join('')
+      : '<tr><td colspan="9" class="empty">Açıq mövqe yoxdur</td></tr>') + '</tbody>';
+
+  $('s-trades-note').textContent = `son ${d.trades.length} əməliyyat`;
+  $('s-trades').innerHTML = '<thead><tr><th>Coin</th><th>Açılış</th><th>Bağlanış</th><th>Müddət</th><th>Giriş</th><th>Çıxış</th><th>Qoyulan</th><th>Nəticə</th><th>%</th><th>Komissiya</th></tr></thead><tbody>' +
+    (d.trades.length ? d.trades.map((t) => `<tr><td><b>${esc(t.symbol)}</b></td><td>${when(t.opened_at)}</td><td>${when(t.closed_at)}</td><td>${duration(t.closed_at - t.opened_at)}</td>
+      <td>${price(t.entry_price)}</td><td>${price(t.exit_price)}</td><td>${money(t.cost)}</td><td class="${cls(t.pnl)}">${money(t.pnl, true)}</td><td class="${cls(t.ret)}">${pct(t.ret * 100)}</td><td>${money(t.fees)}</td></tr>`).join('')
+      : '<tr><td colspan="10" class="empty">Hələ bağlanmış əməliyyat yoxdur</td></tr>') + '</tbody>';
+}
+
+/* ---------- refresh loop ---------- */
+let busy = false;
+async function refresh(force = false) {
+  if (busy) return;
+  busy = true;
+  try {
+    const view = state.view;
+    const [ov, detail] = await Promise.all([
+      getJSON('/api/overview'),
+      view ? getJSON('/api/strategy/' + encodeURIComponent(view)) : Promise.resolve(null),
+    ]);
+    if (view !== state.view) return;  // user switched section while loading
+    state.overview = ov;
+    renderStatus(ov.status);
+    renderNav();
+    if (view) {
+      renderDetail(detail);
+    } else {
+      renderOverview(ov);
+      if (force || Date.now() - state.curvesAt > 30000 || !state.curves) {
+        state.curves = await getJSON('/api/curves');
+        state.curvesAt = Date.now();
+      }
+      renderCurves(state.curves);
+    }
+  } catch (err) {
+    $('notice').textContent = 'Serverlə əlaqə yoxdur: ' + err.message;
+  } finally {
+    busy = false;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  window.addEventListener('hashchange', route);
+  $('prev').addEventListener('click', () => step(-1));
+  $('next').addEventListener('click', () => step(1));
+  $('nav-select').addEventListener('change', (e) => { location.hash = e.target.value ? '#/s/' + e.target.value : '#/'; });
+  document.addEventListener('keydown', (e) => {
+    if (!state.view || e.target.tagName === 'SELECT' || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.key === 'ArrowLeft') step(-1);
+    if (e.key === 'ArrowRight') step(1);
+  });
+  const go = (e) => { const tr = e.target.closest('tr[data-key]'); if (tr) location.hash = '#/s/' + tr.dataset.key; };
+  $('ov-table').addEventListener('click', (e) => {
+    const th = e.target.closest('th[data-col]');
+    if (th) {
+      const col = th.dataset.col;
+      state.sort = { col, dir: state.sort.col === col ? -state.sort.dir : (col === 'rank' || col === 'name' ? 1 : -1) };
+      renderOverview(state.overview);
+      return;
+    }
+    go(e);
+  });
+  $('ov-events').addEventListener('click', go);
+  route();
+  setInterval(() => refresh(false), REFRESH_MS);
+  setInterval(tickClock, 1000);
+});

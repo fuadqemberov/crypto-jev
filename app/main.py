@@ -1,63 +1,64 @@
+"""Dashboard + engine in one process: uvicorn app.main:app --workers 1"""
 from __future__ import annotations
-from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any
-from starlette.responses import Response
+
 import asyncio
 import logging
 import secrets
-import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from typing import Any
+
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic
+from starlette.responses import Response
+
 from .config import Settings
+from .demo import DemoMarket
 from .engine import Engine
+from .market import BinanceMarket
 from .store import Store
 
 STATIC = Path(__file__).parent / 'static'
+CHART_JS = Path(__file__).parent.parent / 'backtest' / 'assets' / 'chart.umd.min.js'
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
+       "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
 
-def create_app(settings: Settings | None = None, start_worker: bool = True) -> FastAPI:
+def create_app(settings: Settings | None = None, start_worker: bool = True, market: Any = None) -> FastAPI:
     settings = settings or Settings.load()
-    application_log = logging.getLogger('app')
-    if not application_log.handlers:
-        application_log.addHandler(logging.StreamHandler())
-    application_log.setLevel(logging.INFO)
-    application_log.propagate = False
+    app_log = logging.getLogger('app')
+    if not app_log.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
+        app_log.addHandler(handler)
+    app_log.setLevel(logging.INFO)
+    app_log.propagate = False
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        store = Store(settings.data_dir / ('demo.db' if settings.demo else 'analysis.db'))
+        store = Store(settings.db_path)
         async with httpx.AsyncClient(timeout=httpx.Timeout(20), follow_redirects=False) as client:
-            app.state.engine = Engine(settings, client, store)
-            app.state.manual_task = None
-            app.state.market_views = {}
-            app.state.last_manual = -float('inf')
+            source = market or (DemoMarket(settings) if settings.demo else BinanceMarket(settings, client))
+            app.state.engine = Engine(settings, source, store)
             worker = asyncio.create_task(app.state.engine.run()) if start_worker else None
-            telemetry = asyncio.create_task(app.state.engine.execution.run()) if start_worker else None
             try:
                 yield
             finally:
-                for task in (worker, telemetry, app.state.manual_task):
-                    if task:
-                        task.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await task
+                if worker:
+                    worker.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await worker
                 store.close()
 
-    app = FastAPI(title='Crypto Jev', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title='Crypto Strategies', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     basic = HTTPBasic(auto_error=False)
 
     @app.middleware('http')
     async def protect(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
-        bridge_request = request.url.path in ('/api/execution/signals', '/api/execution/heartbeat', '/api/execution/health')
-        if bridge_request:
-            expected = 'Bearer ' + settings.bridge_token
-            if not settings.bridge_token or not secrets.compare_digest(request.headers.get('Authorization', '').encode(), expected.encode()):
-                return JSONResponse({'detail': 'Bridge token tələb olunur.'}, status_code=401)
-        elif settings.user:
+        if settings.user and request.url.path != '/health':
             try:
                 credentials = await basic(request)
             except HTTPException:
@@ -65,14 +66,14 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
             if not credentials or not (secrets.compare_digest(credentials.username.encode(), settings.user.encode()) &
                                         secrets.compare_digest(credentials.password.encode(), settings.password.encode())):
                 return JSONResponse({'detail': 'Giriş tələb olunur.'}, status_code=401, headers={'WWW-Authenticate': 'Basic'})
-        if request.method == 'POST' and not bridge_request:
-            # Browser cross-site form submissions cannot supply this custom header.
-            if request.headers.get('X-Crypto-Jev') != '1' or request.headers.get('Sec-Fetch-Site') == 'cross-site':
-                return JSONResponse({'detail': 'Sorğu mənbəyi qəbul edilmədi.'}, status_code=403)
+        if request.method not in ('GET', 'HEAD'):
+            # The dashboard is read-only; nothing can change the virtual accounts over HTTP.
+            return JSONResponse({'detail': 'Yalnız oxuma icazəsi var.'}, status_code=405)
         response = await call_next(request)
         response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+        response.headers['Referrer-Policy'] = 'no-referrer'
+        response.headers['Content-Security-Policy'] = CSP
         return response
 
     @app.get('/')
@@ -81,6 +82,8 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
 
     @app.get('/static/{filename}')
     async def static(filename: str) -> FileResponse:
+        if filename == 'chart.umd.min.js':
+            return FileResponse(CHART_JS, media_type='text/javascript')
         if filename not in ('app.js', 'style.css'):
             raise HTTPException(404)
         return FileResponse(STATIC / filename)
@@ -89,88 +92,19 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
     async def health() -> dict[str, str]:
         return {'status': 'ok'}
 
-    @app.get('/api/status')
-    async def status() -> dict[str, Any]:
-        return app.state.engine.status()
+    @app.get('/api/overview')
+    async def overview() -> dict[str, Any]:
+        return app.state.engine.overview()
 
-    @app.get('/api/history')
-    async def history() -> list[dict[str, Any]]:
-        return app.state.engine.store.history()
+    @app.get('/api/curves')
+    async def curves() -> dict[str, Any]:
+        return app.state.engine.curves()
 
-    @app.get('/api/market/{symbol}')
-    async def market_view(symbol: str, interval: str = '15m') -> dict[str, Any]:
-        engine = app.state.engine
-        if symbol not in engine.symbols or interval not in ('1m', '15m', '1h', '4h'):
-            raise HTTPException(404, 'Bazar və ya period tapılmadı.')
-        if settings.demo:
-            raise HTTPException(503, 'Demo rejimində canlı order book yoxdur.')
-        key = (symbol, interval)
-        cached = app.state.market_views.get(key)
-        if cached and time.monotonic() - cached[0] < 5:
-            return cached[1]
-        try:
-            bars, book, premium = await asyncio.gather(
-                engine.market.get('/fapi/v1/klines', symbol=symbol, interval=interval, limit=100),
-                engine.market.get('/fapi/v1/depth', symbol=symbol, limit=20),
-                engine.market.get('/fapi/v1/premiumIndex', symbol=symbol))
-            value = dict(symbol=symbol, interval=interval, observed_at=int(time.time()*1000),
-                         candles=[dict(time=b[0], open=float(b[1]), high=float(b[2]), low=float(b[3]),
-                                       close=float(b[4]), volume=float(b[5])) for b in bars],
-                         bids=book['bids'], asks=book['asks'], mark=float(premium['markPrice']),
-                         funding_rate=float(premium['lastFundingRate']))
-            app.state.market_views[key] = (time.monotonic(), value)
-            if len(app.state.market_views) > 8:
-                del app.state.market_views[next(iter(app.state.market_views))]
-            return value
-        except Exception:
-            raise HTTPException(503, 'Canlı bazar məlumatı alınmadı.') from None
-
-    @app.get('/api/execution/signals')
-    async def signals() -> dict[str, Any]:
-        engine = app.state.engine
-        await engine.refresh_marks()
-        engine.execution.last_pull = int(time.time()*1000)
-        return engine.signals()
-
-    @app.post('/api/execution/heartbeat')
-    async def heartbeat(request: Request) -> dict[str, bool]:
-        # Bound streamed body before JSON parsing; content-length is untrusted.
-        body = bytearray()
-        async for chunk in request.stream():
-            body.extend(chunk)
-            if len(body) > 256_000:
-                raise HTTPException(413)
-        try:
-            import json
-            app.state.engine.execution.receive_heartbeat(json.loads(body))
-        except (ValueError, TypeError, KeyError):
-            raise HTTPException(422, 'Heartbeat yoxlamadan keçmədi.') from None
-        return {'accepted': True}
-
-    @app.get('/api/execution/health')
-    async def bridge_health() -> JSONResponse:
-        engine = app.state.engine
-        result = engine.signals()['diagnostics']
-        healthy = result['health'] == 'healthy' and not any(code in result['blocks'] for code in ('storage_error', 'discovery', 'worker_error'))
-        return JSONResponse(result, status_code=200 if healthy else 503)
-
-    @app.post('/api/execution/{action}')
-    async def control(action: str) -> dict[str, bool]:
-        if action not in ('pause', 'resume'):
-            raise HTTPException(404)
-        app.state.engine.store.set_paused(action == 'pause')
-        return {'paused': action == 'pause'}
-
-    @app.post('/api/scan', status_code=202)
-    async def scan() -> dict[str, str]:
-        task = app.state.manual_task
-        if app.state.engine.scanning or (task and not task.done()):
-            raise HTTPException(409, 'Skan artıq davam edir.')
-        if time.monotonic() - app.state.last_manual < 60:
-            raise HTTPException(429, 'Növbəti skan üçün 60 saniyə gözləyin.')
-        app.state.last_manual = time.monotonic()
-        app.state.manual_task = asyncio.create_task(app.state.engine.scan())
-        return {'message': 'Skan başladıldı.'}
+    @app.get('/api/strategy/{key}')
+    async def strategy(key: str) -> dict[str, Any]:
+        if key not in app.state.engine.by_key:
+            raise HTTPException(404, 'Strategiya tapılmadı.')
+        return app.state.engine.detail(key)
 
     return app
 

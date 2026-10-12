@@ -437,7 +437,7 @@ el('method').innerHTML=[
   `Benchmark "Al və saxla": eyni kapital bütün coinlərə bərabər bölünüb dövrün əvvəlində alınır və sonunda satılır.`,
   `<b>Xəbərdarlıq:</b> bu hesabat yalnız tarixi simulyasiyadır və investisiya məsləhəti deyil. Keçmiş nəticələr gələcək gəliri təmin etmir; real bazarda likvidlik, sürüşmə və gecikmə nəticələri dəyişə bilər.`
 ].map(x=>`<li>${x}</li>`).join('');
-el('footer').textContent=`Hazırlanıb: ${M.generated} · crypto-jev backtest modulu · Chart.js ilə`;
+el('footer').textContent=`Hazırlanıb: ${M.generated} · 20 strategiya backtest modulu · Chart.js ilə`;
 })();
 </script>
 </body>

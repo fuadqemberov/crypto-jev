@@ -1,142 +1,122 @@
+"""Binance spot public market data (no API key, read-only).
+
+``data-api.binance.vision`` is Binance's official public market-data mirror; ``api.binance.com``
+returns HTTP 451 in some regions. Only GET requests to public endpoints are made.
+"""
 from __future__ import annotations
-from typing import Any
+
 import asyncio
-import math
+import logging
 import time
+from typing import Any
+
 import httpx
-from .indicators import INTERVALS, closed_bars, features
+import pandas as pd
+
+from backtest.data import EXCLUDED_BASES
+
+from .config import Settings
+
+log = logging.getLogger('app.market')
+LEVERAGED_SUFFIXES = ('UP', 'DOWN', 'BULL', 'BEAR')
 
 
 class MarketError(Exception):
     pass
 
 
-class Market:
-    def __init__(self, client: httpx.AsyncClient) -> None:
+def frame(rows: list[list[Any]]) -> pd.DataFrame:
+    df = pd.DataFrame([r[:6] for r in rows], columns=['time', 'open', 'high', 'low', 'close', 'volume'])
+    if df.empty:
+        return df.set_index('time')
+    df = df.astype({'time': 'int64', 'open': float, 'high': float, 'low': float, 'close': float, 'volume': float})
+    return df.drop_duplicates('time').sort_values('time').set_index('time')
+
+
+class BinanceMarket:
+    """Async client with retry, Retry-After cooldown and used-weight back-off."""
+
+    demo = False
+
+    def __init__(self, settings: Settings, client: httpx.AsyncClient) -> None:
+        self.settings = settings
         self.client = client
-        self.next_request = 0.
-        self.cooldown_until = 0.
-        self.lock = asyncio.Lock()
-        # Closed candles only change when a new bar closes; reuse them until then.
-        self.klines = {}
-        # Bulk quote/mark/server-time snapshot shared by every symbol in a scan.
-        self.quotes = None
-        self.quotes_lock = asyncio.Lock()
+        self.interval_ms = settings.interval_ms
+        self._cooldown_until = 0.0
+        self._tradable: tuple[float, set[str]] = (0.0, set())
 
-    async def get(self, path: str, **params: Any) -> Any:
-        # The lock only spaces request starts; responses are awaited outside it so
-        # network latency no longer serializes the whole scan.
-        async with self.lock:
-            now = time.monotonic()
-            if now < self.cooldown_until:
-                raise MarketError('Binance sorğu limiti: növbəti skanı gözləyin.')
-            await asyncio.sleep(max(0, self.next_request - now))
-            if time.monotonic() < self.cooldown_until:
-                raise MarketError('Binance cooldown')
-            self.next_request = time.monotonic() + .1
-        try:
-            r = await self.client.get('https://fapi.binance.com' + path, params=params)
+    def now_ms(self) -> int:
+        return int(time.time() * 1000)
+
+    async def _get(self, path: str, **params: Any) -> Any:
+        last: Exception | None = None
+        for attempt in range(4):
+            wait = self._cooldown_until - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
             try:
-                # Binance allows 2400 weight/min per IP; back off well before it.
-                if int(r.headers.get('X-MBX-USED-WEIGHT-1M', '0')) > 1800:
-                    self.next_request = max(self.next_request, time.monotonic() + 60 - time.time() % 60)
-            except ValueError:
-                pass
-            if r.status_code in (418, 429):
+                r = await self.client.get(self.settings.binance_url + path, params=params or None)
+                if r.status_code in (418, 429):
+                    try:
+                        delay = float(r.headers.get('Retry-After', '60'))
+                    except ValueError:
+                        delay = 60.0
+                    self._cooldown_until = time.monotonic() + min(max(delay, 1.0), 300.0)
+                    log.warning('Binance rate limit (%s), %.0f s fasilə', r.status_code, delay)
+                    last = MarketError(f'HTTP {r.status_code}')
+                    continue
+                r.raise_for_status()
                 try:
-                    delay = float(r.headers.get('Retry-After', '300'))
-                    if not math.isfinite(delay):
-                        delay = 300
+                    if int(r.headers.get('x-mbx-used-weight-1m', '0')) > 4800:
+                        self._cooldown_until = time.monotonic() + 60 - time.time() % 60 + 1
                 except ValueError:
-                    delay = 300
-                self.cooldown_until = time.monotonic() + max(60, min(delay, 86400))
-                raise MarketError('Binance sorğu limiti tətbiq etdi.')
-            r.raise_for_status()
-            return r.json()
-        except (httpx.HTTPError, ValueError) as e:
-            raise MarketError('Binance məlumatını almaq mümkün olmadı.') from e
+                    pass
+                return r.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                last = exc
+                await asyncio.sleep(min(2 ** attempt, 8))
+        raise MarketError(f'{path} alınmadı: {type(last).__name__}')
 
-    async def discover_symbols(self) -> tuple[str, ...]:
-        data = await self.get('/fapi/v1/exchangeInfo')
-        symbols = sorted({item['symbol'] for item in data['symbols']
-                          if item.get('status') == 'TRADING'
-                          and item.get('contractType') == 'PERPETUAL'
-                          and item.get('quoteAsset') == 'USDT'
-                          and item.get('marginAsset') == 'USDT'
-                          and isinstance(item.get('symbol'), str)
-                          and item['symbol'].isalnum() and item['symbol'].endswith('USDT')})
+    async def _tradable_symbols(self) -> set[str]:
+        stamp, symbols = self._tradable
+        if symbols and time.monotonic() - stamp < 6 * 3600:
+            return symbols
+        info = await self._get('/exchangeInfo', permissions='SPOT')
+        symbols = {s['symbol'] for s in info.get('symbols', [])
+                   if s.get('quoteAsset') == 'USDT' and s.get('status') == 'TRADING'
+                   and s.get('isSpotTradingAllowed', True) and s.get('baseAsset') not in EXCLUDED_BASES
+                   and not str(s.get('baseAsset', '')).endswith(LEVERAGED_SUFFIXES)}
         if not symbols:
-            raise MarketError('Aktiv USDT perpetual bazarları tapılmadı.')
-        return tuple(symbols)
+            raise MarketError('exchangeInfo boşdur')
+        self._tradable = (time.monotonic(), symbols)
+        return symbols
 
-    def prune(self, symbols: tuple[str, ...]) -> None:
-        allowed = set(symbols)
-        self.klines = {k: v for k, v in self.klines.items() if k[0] in allowed}
+    async def universe(self) -> list[tuple[str, float]]:
+        """Tradable USDT pairs ranked by 24h quote volume (top N, or the configured list)."""
+        tradable = await self._tradable_symbols()
+        tickers = await self._get('/ticker/24hr')
+        volume = {t['symbol']: float(t.get('quoteVolume') or 0) for t in tickers if t.get('symbol') in tradable}
+        if self.settings.symbols != ('ALL',):
+            return sorted(((s, volume.get(s, 0.0)) for s in self.settings.symbols if s in tradable),
+                          key=lambda x: -x[1])
+        return sorted(volume.items(), key=lambda x: -x[1])[:self.settings.top_n]
 
-    async def volume_ranking(self, symbols: tuple[str, ...]) -> tuple[str, ...]:
-        data = await self.get('/fapi/v1/ticker/24hr')
-        allowed = set(symbols)
-        volumes = [(item['symbol'], float(item['quoteVolume'])) for item in data if item.get('symbol') in allowed]
-        if any(not math.isfinite(v) or v < 0 for _, v in volumes):
-            raise MarketError('Invalid volume')
-        return tuple(s for s, _ in sorted(volumes, key=lambda item: item[1], reverse=True))
+    async def prices(self) -> dict[str, float]:
+        rows = await self._get('/ticker/price')
+        out = {}
+        for row in rows:
+            try:
+                price = float(row['price'])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if price > 0:
+                out[row['symbol']] = price
+        return out
 
-    async def _quotes(self) -> tuple[float, int, dict[str, Any], dict[str, Any]]:
-        # Three bulk requests replace three per-symbol requests; refreshed every 2 s.
-        async with self.quotes_lock:
-            if self.quotes is None or time.monotonic() - self.quotes[0] > 2:
-                books = await self.get('/fapi/v1/ticker/bookTicker')
-                premiums = await self.get('/fapi/v1/premiumIndex')
-                server = int((await self.get('/fapi/v1/time'))['serverTime'])
-                self.quotes = (time.monotonic(), server - int(time.time() * 1000),
-                               {q['symbol']: q for q in books}, {p['symbol']: p for p in premiums})
-            return self.quotes
-
-    async def _frame(self, symbol: str, interval: str, now: int) -> tuple[int, dict[str, Any], list[dict[str, Any]] | None]:
-        # Indicators use closed bars only, so they are recomputed only after the
-        # still-open candle closes. Caching features (not raw bars) keeps memory small.
-        cached = self.klines.get((symbol, interval))
-        if cached is None or now > cached[0]:
-            raw = await self.get('/fapi/v1/klines', symbol=symbol, interval=interval, limit=301)
-            bars = closed_bars(raw, interval, now)
-            cached = (int(raw[-1][6]) if int(raw[-1][6]) >= now else now, features(bars),
-                      bars[-80:] if interval == '15m' else None)
-            self.klines[(symbol, interval)] = cached
-        elif now - cached[1]['close_time'] > INTERVALS[interval] + 30_000:
-            raise MarketError('Bazar məlumatı köhnədir.')
-        return cached
-
-    async def snapshot(self, symbol: str) -> dict[str, Any]:
-        _, offset, books, premiums = await self._quotes()
-        if symbol not in books or symbol not in premiums:
-            raise MarketError('Bid/ask və ya mark qiyməti yoxdur.')
-        quote, premium = books[symbol], premiums[symbol]
-        now = int(time.time() * 1000) + offset
-        frames = dict(zip(INTERVALS, await asyncio.gather(*(self._frame(symbol, i, now) for i in INTERVALS))))
-        bid, ask, mark, funding = float(quote['bidPrice']), float(quote['askPrice']), float(premium['markPrice']), float(premium['lastFundingRate'])
-        if not all(math.isfinite(x) for x in (bid, ask, mark, funding)) or not 0 < bid <= ask or mark <= 0:
-            raise MarketError('Bazar qiyməti etibarsızdır.')
-        if any(not -5000 <= now - int(item['time']) <= 60_000 for item in (quote, premium)):
-            raise MarketError('Bid/ask və ya mark qiyməti köhnədir.')
-        return dict(symbol=symbol, source='Binance USD-M', observed_at=now, bid=bid, ask=ask, mark=mark,
-                    spread_bps=(ask - bid) / ((ask + bid) / 2) * 10000, funding_rate=funding,
-                    frames={k: dict(v[1]) for k, v in frames.items()}, candles=frames['15m'][2])
-
-
-def demo_snapshot(symbol: str) -> dict[str, Any]:
-    # Stable synthetic sample, explicitly labelled and never sent to Jev.
-    now = int(time.time() * 1000)
-    raw = {}
-    base = {'BTCUSDT': 65000, 'ETHUSDT': 3000, 'SOLUSDT': 140, 'BNBUSDT': 550, 'XRPUSDT': .6}.get(symbol, 100)
-    for interval, step in INTERVALS.items():
-        end = now // step * step
-        rows = []
-        for i in range(301):
-            t = end - (301 - i) * step
-            close = base * (1 + i * .0003 + .012 * math.sin(i / 6))
-            opening = close * (1 + .001 * math.sin(i))
-            rows.append([t, opening, max(close, opening) * 1.002, min(close, opening) * .998, close, 100 + i % 30, t + step - 1])
-        raw[interval] = closed_bars(rows, interval, now)
-    price = raw['15m'][-1]['close']
-    return dict(symbol=symbol, source='DEMO — sintetik məlumat', observed_at=now, bid=price * .9999, ask=price * 1.0001,
-                mark=price, spread_bps=2., funding_rate=.0001, frames={k: features(v) for k, v in raw.items()}, candles=raw['15m'][-80:])
+    async def klines(self, symbol: str, limit: int) -> pd.DataFrame:
+        """Last ``limit`` CLOSED candles (the still-forming candle is dropped)."""
+        rows = await self._get('/klines', symbol=symbol, interval=self.settings.timeframe, limit=min(limit + 1, 1000))
+        df = frame(rows)
+        if not df.empty:
+            df = df[df.index + self.interval_ms <= self.now_ms()]
+        return df.tail(limit)
