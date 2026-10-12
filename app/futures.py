@@ -9,9 +9,9 @@ Direction
 
 Leverage (chosen by the strategy itself, per trade)
     Every strategy declares how much adverse movement it expects to sit through, in ATR(14)
-    multiples, and its own leverage ceiling. On each entry::
+    multiples. On each entry::
 
-        leverage = floor(0.5 / (ATR% × atr_mult)), clamped to [1, min(strategy_max, MAX_LEVERAGE)]
+        leverage = floor(0.5 / (ATR% × atr_mult)), clamped to [1×, MAX_LEVERAGE] (default 1×–100×)
 
     so the strategy's typical adverse move costs at most ~50 % of the position margin, while
     liquidation sits roughly twice as far away. Calm coins get more leverage, wild ones less;
@@ -32,15 +32,15 @@ from backtest.strategies import Strategy
 log = logging.getLogger('app.futures')
 RISK_PER_TYPICAL_MOVE = 0.5
 
-# key -> (expected adverse move in ATR multiples, strategy's own max leverage)
+# key -> (expected adverse move in ATR multiples, leverage ceiling)
 LEVERAGE_PROFILE: dict[str, tuple[float, int]] = {
-    'sma_cross': (3.0, 10), 'ema_cross': (3.0, 10), 'rsi': (2.0, 15), 'macd': (2.5, 12),
-    'bb_revert': (2.0, 15), 'bb_break': (3.0, 8), 'stoch': (2.0, 12), 'adx': (3.0, 10),
-    'ichimoku': (3.0, 10), 'vwap': (2.5, 12), 'supertrend': (3.0, 10), 'donchian': (3.5, 8),
-    'williams': (2.0, 15), 'cci': (2.0, 15), 'psar': (2.5, 10), 'keltner': (3.0, 8),
-    'atr_trail': (3.0, 10), 'tema': (2.5, 12), 'mfi': (2.0, 12), 'rsi_macd': (2.5, 12),
+    'sma_cross': (3.0, 100), 'ema_cross': (3.0, 100), 'rsi': (2.0, 100), 'macd': (2.5, 100),
+    'bb_revert': (2.0, 100), 'bb_break': (3.0, 100), 'stoch': (2.0, 100), 'adx': (3.0, 100),
+    'ichimoku': (3.0, 100), 'vwap': (2.5, 100), 'supertrend': (3.0, 100), 'donchian': (3.5, 100),
+    'williams': (2.0, 100), 'cci': (2.0, 100), 'psar': (2.5, 100), 'keltner': (3.0, 100),
+    'atr_trail': (3.0, 100), 'tema': (2.5, 100), 'mfi': (2.0, 100), 'rsi_macd': (2.5, 100),
 }
-DEFAULT_PROFILE = (3.0, 10)
+DEFAULT_PROFILE = (3.0, 100)
 
 
 @dataclass(frozen=True)
@@ -72,7 +72,7 @@ def leverage(key: str, atr_pct: float, cap: int) -> int:
 
 def leverage_rule(key: str, cap: int) -> str:
     mult, own_max = LEVERAGE_PROFILE.get(key, DEFAULT_PROFILE)
-    return f'Leverage: ⌊0.5 / (ATR% × {mult:g})⌋, 1× – {min(own_max, cap)}× (strategiyanın öz tavanı {own_max}×).'
+    return f'Leverage: ⌊0.5 / (ATR% × {mult:g})⌋, 1× – {min(own_max, cap)}×.'
 
 
 def evaluate(strategies: list[Strategy], data: dict[str, pd.DataFrame]) -> dict[str, dict[str, Signal]]:

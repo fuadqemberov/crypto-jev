@@ -114,13 +114,15 @@ def test_ledger_persists_across_restart(tmp_path):
 
 
 # --- strategy layer -------------------------------------------------------------------
-def test_leverage_is_chosen_by_strategy_and_volatility():
-    assert leverage('rsi', 0.01, 20) == 15                          # floor(0.5/0.02)=25 -> own cap 15
-    assert leverage('donchian', 0.01, 20) == 8                       # own cap 8
-    assert leverage('sma_cross', 0.04, 20) == 4                      # floor(0.5/0.12)
-    assert leverage('sma_cross', 0.5, 20) == 1
-    assert leverage('rsi', 0.001, 5) == 5                            # global MAX_LEVERAGE wins
-    assert leverage('rsi', float('nan'), 20) == 1
+def test_leverage_is_chosen_by_strategy_and_volatility_from_1x_to_100x():
+    assert leverage('rsi', 0.004, 100) == 62                         # floor(0.5 / 0.008)
+    assert leverage('donchian', 0.004, 100) == 35                    # floor(0.5 / 0.014)
+    assert leverage('sma_cross', 0.04, 100) == 4                     # floor(0.5 / 0.12)
+    assert leverage('rsi', 0.0005, 100) == 100                       # very calm coin -> capped at 100x
+    assert leverage('sma_cross', 0.5, 100) == 1                      # never below 1x
+    assert leverage('rsi', 0.0005, 20) == 20                         # MAX_LEVERAGE wins
+    assert leverage('rsi', float('nan'), 100) == 1
+    assert settings().max_leverage == 100
     assert set(LEVERAGE_PROFILE) == {s.key for s in STRATEGIES}
 
 
@@ -204,7 +206,7 @@ def test_long_entry_take_profit_and_no_reentry_until_fresh_signal():
     e = Engine(settings(), m, Store(':memory:'), [DIR])
     tick(e, m, 0)
     pos = e.ledger.accounts['dir'].positions['AUSDT']
-    assert pos.side == 1 and 1 <= pos.leverage <= 15
+    assert pos.side == 1 and 1 <= pos.leverage <= 100
     assert e.signals['dir']['entries'] == [{'symbol': 'AUSDT', 'side': 'LONG', 'leverage': pos.leverage}]
     # price moves enough for > $15 net profit between candles -> closed by take profit
     need = 101 * (1 + (15 + pos.fee + 2) / pos.notional * 1.2)
@@ -317,7 +319,7 @@ def test_all_20_strategies_trade_long_and_short_on_demo_market():
         assert r['equity'] == pytest.approx(r['capital'] + r['realized'] + r['unrealized'])
     for key in e.by_key:
         for t in e.store.trades(key):
-            assert 1 <= t['leverage'] <= 20
+            assert 1 <= t['leverage'] <= 100 and isinstance(t['leverage'], int)
             if t['reason'] == 'take_profit':
                 assert t['pnl'] >= 15 - 1e-9
     assert e.detail(STRATEGIES[0].key)['leverage_rule'].startswith('Leverage')

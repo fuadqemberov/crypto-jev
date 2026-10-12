@@ -43,27 +43,32 @@ işlədin. Şəbəkəsiz sınaq: `DEMO_MODE=true` — sintetik futures bazarı, 
 
 ### Leverage-i strategiya özü seçir
 
-Hər strategiya gözlədiyi əks hərəkəti ATR(14) əmsalı ilə və öz leverage tavanı ilə bəyan edir. Hər girişdə:
+Hər strategiya gözlədiyi əks hərəkəti ATR(14) əmsalı ilə bəyan edir. Hər girişdə:
 
 ```text
-leverage = floor(0.5 / (ATR% × atr_əmsalı)),  1× … min(strategiyanın tavanı, MAX_LEVERAGE)
+leverage = floor(0.5 / (ATR% × atr_əmsalı)),  1× … MAX_LEVERAGE (default 100×)
 ```
 
 Yəni strategiyanın tipik əks hərəkəti marjanın ən çox ~50%-ni aparır, likvidasiya isə təxminən iki dəfə uzaqdadır.
-Sakit coin-də leverage yüksək, dəyişkən coin-də aşağı olur.
+Sakit coin-də leverage yüksək (100×-ə qədər), dəyişkən coin-də aşağı (1×-ə qədər) olur. Məsələn ATR% = 0.4% olan
+coin-də RSI (əmsal 2.0) 62×, Donçian (əmsal 3.5) 35× seçir; ATR% = 3% olan coin-də uyğun olaraq 8× və 4×.
 
-| Strategiya | ATR əmsalı | Öz tavanı | Strategiya | ATR əmsalı | Öz tavanı |
-|---|---:|---:|---|---:|---:|
-| SMA kəsişməsi | 3.0 | 10× | Supertrend | 3.0 | 10× |
-| EMA kəsişməsi | 3.0 | 10× | Donçian | 3.5 | 8× |
-| RSI | 2.0 | 15× | Williams %R | 2.0 | 15× |
-| MACD | 2.5 | 12× | CCI | 2.0 | 15× |
-| Bollinger qayıdış | 2.0 | 15× | Parabolik SAR | 2.5 | 10× |
-| Bollinger qırılma | 3.0 | 8× | Keltner | 3.0 | 8× |
-| Stoxastik | 2.0 | 12× | ATR izləyən stop | 3.0 | 10× |
-| ADX | 3.0 | 10× | TEMA | 2.5 | 12× |
-| İçimoku | 3.0 | 10× | MFI | 2.0 | 12× |
-| VWAP | 2.5 | 12× | RSI + MACD | 2.5 | 12× |
+| Strategiya | ATR əmsalı | Strategiya | ATR əmsalı |
+|---|---:|---|---:|
+| SMA kəsişməsi | 3.0 | Supertrend | 3.0 |
+| EMA kəsişməsi | 3.0 | Donçian | 3.5 |
+| RSI | 2.0 | Williams %R | 2.0 |
+| MACD | 2.5 | CCI | 2.0 |
+| Bollinger qayıdış | 2.0 | Parabolik SAR | 2.5 |
+| Bollinger qırılma | 3.0 | Keltner | 3.0 |
+| Stoxastik | 2.0 | ATR izləyən stop | 3.0 |
+| ADX | 3.0 | TEMA | 2.5 |
+| İçimoku | 3.0 | MFI | 2.0 |
+| VWAP | 2.5 | RSI + MACD | 2.5 |
+
+Diqqət: real Binance-də 100× yalnız BTC/ETH kimi böyük kontraktlarda və kiçik nominalda mümkündür; çox altcoin-də
+real limit 20–75×-dir. Simulyasiya bu coin-limitlərini tətbiq etmir (onlar API açarı tələb edən endpoint-dədir) —
+istəsəniz `MAX_LEVERAGE` ilə ümumi həddi azaldın. 100×-də likvidasiya ~0.5% əks hərəkətdədir.
 
 Profil `app/futures.py` faylındadır (`LEVERAGE_PROFILE`).
 

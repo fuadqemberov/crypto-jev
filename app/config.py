@@ -22,7 +22,7 @@ class Settings:
     margin_pct: float = 5.0              # margin per order, % of the account's current equity
     min_margin: float = 5.0              # smallest margin worth opening (USDT)
     take_profit: float = 15.0            # close as soon as net PnL of a position >= this (USDT); 0 = off
-    max_leverage: int = 20               # global ceiling for the leverage a strategy may choose
+    max_leverage: int = 100              # global ceiling for the leverage a strategy may choose
     fee_rate: float = 0.0005             # taker fee per side (Binance USDT-M default 0.05%)
     slippage_rate: float = 0.0005
     maint_margin_rate: float = 0.005     # maintenance margin used for the liquidation check
@@ -80,7 +80,7 @@ class Settings:
             top_n=int(env('TOP_N', '50')), timeframe=env('TIMEFRAME', '1h').strip(),
             capital=float(env('START_CAPITAL', '2000')), margin_pct=float(env('ORDER_MARGIN_PCT', '5')),
             min_margin=float(env('MIN_MARGIN_USDT', '5')), take_profit=float(env('TAKE_PROFIT_USDT', '15')),
-            max_leverage=int(env('MAX_LEVERAGE', '20')),
+            max_leverage=int(env('MAX_LEVERAGE', '100')),
             fee_rate=float(env('FEE_RATE', '0.0005')), slippage_rate=float(env('SLIPPAGE_RATE', '0.0005')),
             maint_margin_rate=float(env('MAINT_MARGIN_RATE', '0.005')),
             history_bars=int(env('HISTORY_BARS', '500')),
