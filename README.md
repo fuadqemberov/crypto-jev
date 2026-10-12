@@ -36,6 +36,30 @@ Dashboard: <http://127.0.0.1:8082>. Windows: Python 3.12+ quraşdırın və `run
 Hər iki proses eyni virtual environment-də quraşdırılmış `app` paketindən istifadə edir.
 Birdən çox engine worker işlətməyin. `DEMO_MODE=true` sintetik məlumat göstərir və heç bir giriş açmır.
 
+## 20 strategiyalı backtest modulu (`backtest/`)
+
+JEV-dən və Freqtrade-dən asılı olmayan, tarixi məlumat üzərində işləyən virtual ticarət sistemi.
+20 klassik texniki analiz strategiyası (SMA/EMA kəsişməsi, RSI, MACD, Bollinger, Stoxastik, ADX,
+İçimoku, VWAP, Supertrend, Donçian, Williams %R, CCI, Parabolik SAR, Keltner, ATR izləyən stop,
+TEMA, MFI, RSI+MACD) **hər biri müstəqil 2000 $ virtual balansla** bütün Binance spot USDT
+coinləri üzərində 1 saatlıq şamlarla test edilir və nəticələr tək faylda HTML hesabat kimi verilir.
+
+```bash
+pip install httpx pandas numpy
+python -m backtest --days 183 --capital 2000 --out crypto_strategies_report.html
+# məhdud siyahı: python -m backtest --symbols BTCUSDT ETHUSDT SOLUSDT
+```
+
+- Məlumat: `data-api.binance.vision` (Binance-in rəsmi açıq market-data API-si; `api.binance.com`
+  bəzi regionlarda 451 qaytarır). Şamlar `data/klines/` qovluğunda keşlənir.
+- Stablecoin, fiat, qızıl və wrapped aktivlər çıxarılır; dövrün ≥97%-i üçün tarixçəsi olmayan coinlər buraxılır.
+- Kapital coinlərə bərabər bölünür, yalnız long spot, leverage yoxdur. Siqnal şam bağlananda,
+  icra növbəti şamın açılışında; hər tərəfə 0.10% komissiya + 0.05% sürüşmə.
+- Metriklər: gəlir, son balans, uduş faizi, maks. geriləmə, Sharpe, Sortino, Calmar, mənfəət faktoru,
+  əməliyyat sayı, bazarda olma müddəti, coin üzrə gəlir, aylıq gəlirlər; benchmark — "Al və saxla".
+- Son nəticə nümunəsi: `reports/crypto_strategies_report.html` (12 Aprel — 12 Oktyabr 2026, 383 coin).
+- Testlər: `pytest tests/test_backtest.py` (gələcək məlumatdan istifadə olunmadığı da yoxlanır).
+
 ## Arxitektura və məlumat axını
 
 ```mermaid
