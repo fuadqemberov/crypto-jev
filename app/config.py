@@ -1,4 +1,4 @@
-"""Runtime settings for the 23-strategy USDT-M futures paper-trading system (read from .env)."""
+"""Runtime settings for the 26-strategy USDT-M futures paper-trading system (read from .env)."""
 from __future__ import annotations
 
 import math

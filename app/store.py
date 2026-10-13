@@ -1,4 +1,4 @@
-"""SQLite persistence for the 23 virtual futures accounts (positions, trades, equity curve)."""
+"""SQLite persistence for the 26 virtual futures accounts (positions, trades, equity curve)."""
 from __future__ import annotations
 
 import json

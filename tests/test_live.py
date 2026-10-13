@@ -1,4 +1,4 @@
-"""Live 23-account USDT-M futures paper engine: accounting, signals, TP, liquidation, funding, API."""
+"""Live 26-account USDT-M futures paper engine: accounting, signals, TP, liquidation, funding, API."""
 from __future__ import annotations
 
 import asyncio

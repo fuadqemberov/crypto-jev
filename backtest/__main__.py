@@ -12,7 +12,7 @@ from .report import build_report
 
 
 def main(argv: list[str] | None = None) -> None:
-    p = argparse.ArgumentParser(description='23 strategiyalı kripto backtest (1h, Binance spot USDT)')
+    p = argparse.ArgumentParser(description='26 strategiyalı kripto backtest (1h, Binance spot USDT)')
     p.add_argument('--days', type=int, default=183, help='geriyə test müddəti, gün (default: 183 ≈ 6 ay)')
     p.add_argument('--end', type=int, default=None, help='dövrün sonu, epoch ms (default: son bağlanmış saat)')
     p.add_argument('--capital', type=float, default=2000.0, help='hər strategiya üçün başlanğıc balans, USDT')

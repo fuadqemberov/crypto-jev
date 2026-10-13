@@ -1,8 +1,8 @@
-# 23 Strategiya — canlı virtual futures ticarəti
+# 26 Strategiya — canlı virtual futures ticarəti
 
 Python 3.12+ · FastAPI · Binance USDT-M futures açıq bazar məlumatı · Azərbaycan dilində dashboard.
 
-20 klassik texniki analiz strategiyası və YouTube videolarından götürülmüş 3 taktika — **hər biri ayrıca 2000 $ virtual futures hesabı ilə**, öz qaydası
+20 klassik texniki analiz strategiyası və YouTube videolarından götürülmüş 6 taktika — **hər biri ayrıca 2000 $ virtual futures hesabı ilə**, öz qaydası
 ilə LONG və SHORT açır, leverage-i özü seçir. Dashboard-da strategiyalar arasında bölmə-bölmə keçid edib
 hansının uğurlu olduğunu özünüz müşahidə edirsiniz.
 
@@ -30,7 +30,7 @@ işlədin. Şəbəkəsiz sınaq: `DEMO_MODE=true` — sintetik futures bazarı, 
 | Addım | Təsvir |
 |---|---|
 | Bazar | USDT-M **perpetual** kontraktlar; `SYMBOLS=ALL` → 24 saatlıq həcmə görə ən böyük `TOP_N` (50). Stablecoin, kvartallıq, əmtəə/qeyri-kripto kontraktlar çıxarılır. |
-| Qiymət | Hər 15 s bütün **mark qiymətlər** və funding yenilənir; 23 hesab yenidən qiymətləndirilir. |
+| Qiymət | Hər 15 s bütün **mark qiymətlər** və funding yenilənir; 26 hesab yenidən qiymətləndirilir. |
 | LONG | Strategiyanın öz qaydası (`backtest/strategies.py`) bağlanmış şamda. |
 | SHORT | Eyni qayda qiymətin **güzgü seriyasına** (hər qiymət → 1/qiymət, high↔low) tətbiq olunur — bazarın tam əksi. Məs. SMA20 SMA50-nin altına düşəndə, RSI 70-i aşağı kəsəndə, Donçian minimumu qırılanda SHORT. |
 | Açılış | İstiqamət bağlanmış şamda dəyişibsə (təzə siqnal). Eyni şamda LONG→SHORT olarsa köhnə bağlanır, yenisi açılır („Çevrilmə“). |
@@ -66,7 +66,8 @@ coin-də RSI (əmsal 2.0) 62×, Donçian (əmsal 3.5) 35× seçir; ATR% = 3% ola
 | İçimoku | 3.0 | MFI | 2.0 |
 | VWAP | 2.5 | RSI + MACD | 2.5 |
 | Likvidasiya ovu | 2.0 | MACD histoqram + Vix Fix | 2.5 |
-| Sabit 2:1 R/R | 2.0 (tavan 20×) | | |
+| Sabit 2:1 R/R | 2.0 (tavan 20×) | EMA geri çəkilmə | 2.5 (tavan 25×) |
+| Kanal scalp | 2.0 | Çakır Osilatör | 3.0 (tavan 5×) |
 
 Diqqət: real Binance-də 100× yalnız BTC/ETH kimi böyük kontraktlarda və kiçik nominalda mümkündür; çox altcoin-də
 real limit 20–75×-dir. Simulyasiya bu coin-limitlərini tətbiq etmir (onlar API açarı tələb edən endpoint-dədir) —
@@ -74,10 +75,10 @@ istəsəniz `MAX_LEVERAGE` ilə ümumi həddi azaldın. 100×-də likvidasiya ~0
 
 Profil `app/futures.py` faylındadır (`LEVERAGE_PROFILE`).
 
-## YouTube taktikaları (21–23)
+## YouTube taktikaları (21–26)
 
-Üç kripto YouTube videosunda göstərilən taktikalar yalnız OHLCV ilə ifadə oluna bilən hissəsinə endirilib
-(`backtest/strategies.py`, `s_liq_sweep`, `s_macd_hist`, `s_rr_2to1`). Videolardakı vədlər („zəmanətli“, „100×“)
+Altı kripto YouTube videosunda göstərilən taktikalar yalnız OHLCV ilə ifadə oluna bilən hissəsinə endirilib
+(`backtest/strategies.py`, `s_liq_sweep` … `s_confluence`). Videolardakı vədlər („zəmanətli“, „100×“)
 deyil, qaydanın özü sınanır — digər 20 strategiya ilə eyni şərtlərdə müqayisə üçün.
 
 | Açar | Mənbə | LONG qaydası | Çıxış | Videodan fərqi |
@@ -85,16 +86,19 @@ deyil, qaydanın özü sınanır — digər 20 strategiya ilə eyni şərtlərd�
 | `liq_sweep` | Doğan Çakır — „likvidasiya satın almaq“ | Şam son 20 şamın minimumunun altına fitil atır və yenidən onun üstündə bağlanır (stop/likvidasiya ovu). | Qarşı likvidlik: son 20 şamın maksimumu (hədəf) və ya ov fitilinin dibi (stop). | Coinglass likvidasiya xəritəsi OHLCV-də yoxdur — swing ekstremumlar istifadə olunur; 10 hissəli DCA yoxdur. |
 | `macd_hist` | MACD histoqram rəngləri + CM Williams Vix Fix | Histoqram ardıcıl 2 şam „tünd yaşıl“ (>0 və artan), qiymət son yaşıl Vix Fix şamının dibindən (dəstək) yuxarı. | İlk „açıq yaşıl“ (histoqram azalır), histoqram ≤ 0 və ya dəstək qırılır. | Videoda 4 saatlıq qrafik nəzərdə tutulur — `TIMEFRAME=4h` ilə işlədin; stop-loss videoda yoxdur. |
 | `rr_2to1` | „−10% stop / +20% TP, 20×“ | EMA20 > EMA50 və qiymət Bollinger orta xəttini yuxarı kəsir. | Girişdən −0.5% (stop) və ya +1% (hədəf) — 20×-də marjanın −10% / +20%-i. | BTC istiqamət filtri tək coin məlumatında yoxdur; „öz indikatoru“ açıqlanmayıb. |
+| `ema_pullback` | „Sürdürülebilir kazanç — 3 kural“ | EMA20 > EMA50 > SMA100; qiymət EMA20-yə enir və üstündə bağlanır („fiyat sana gelsin“). | Stop EMA50-dən 0.25×ATR aşağı, hədəf 2R. Coin həmin gün stop/hədəf olarsa, gün sonuna qədər yeni giriş yoxdur. | Asiya (00 UTC) və London (07 UTC) açılışından ±1 saat giriş yoxdur, New York açıqdır. Xəbər günü filtri və „kasanın 100%-i ilə gir“ tətbiq edilmir (marja hamı üçün eynidir). |
+| `range_scalp` | „Dakikalık scalp — kanal taktiği“ | MA20 > MA50 > MA100; son 24 şamın kanalı (eni ≥ 2×ATR), qiymət kanalın alt 25%-ində. | Hədəf kanalın 90%-i, stop kanal minimumundan 0.25×ATR aşağı. | Videoda 1 dəqiqəlik qrafik və 100–150× — burada `TIMEFRAME` nə qoyulubsa ona işləyir; FVG/BOS anlayışları yoxdur. |
+| `confluence` | „Çakır Osilatör“ AI bot sinyalları | Güven xalı 100: qiymət > MA50 > MA200, Supertrend yuxarı, ADX > 20, RSI 50–70, MACD histoqramı > 0; giriş MA60-a geri çəkilmədə. | Supertrend aşağı dönür və ya bağlanış MA60 altındadır. | Botun öz xal düsturu açıqlanmayıb — 5 şərtin hamısı = 100 qəbul edilib; leverage tavanı videodakı kimi 5×. |
 
 SHORT tərəfi digərləri kimi güzgü seriyasından gəlir (məs. 20 şamlıq maksimumun üstündə ov → SHORT).
-`rr_2to1` üçün leverage tavanı videodakı kimi 20×-dir. Ümumi 15 $ TP qaydası bu üç strategiyaya da tətbiq olunur.
+Leverage tavanları videolardakı kimidir: `rr_2to1` 20×, `ema_pullback` 25×, `confluence` 5×. Ümumi 15 $ TP qaydası bu altı strategiyaya da tətbiq olunur.
 
 ## Dashboard
 
-- **Ümumi baxış** — 23 hesabın balans qrafiki (benchmark ilə), sıralana bilən reytinq (balans, gəlir, realizə/açıq PnL,
+- **Ümumi baxış** — 26 hesabın balans qrafiki (benchmark ilə), sıralana bilən reytinq (balans, gəlir, realizə/açıq PnL,
   əməliyyat, uduş %, mənfəət faktoru, maks. geriləmə, TP bağlanışları, likvidasiyalar, orta və faktiki leverage,
   açıq LONG/SHORT) və son əməliyyatlar.
-- **Strategiya bölmələri (23)** — sol menyu, telefonda açılan siyahı, `‹ ›` düymələri və ya ← → oxları ilə keçid.
+- **Strategiya bölmələri (26)** — sol menyu, telefonda açılan siyahı, `‹ ›` düymələri və ya ← → oxları ilə keçid.
   Hər bölmədə: LONG/SHORT/leverage qaydası, KPI-lar, balans qrafiki, son şamın siqnalları, açıq mövqelər
   (istiqamət, leverage, mark, likvidasiya qiyməti, marja, funding, xalis PnL, TP-yə qalan məbləğ) və tarixçə
   (bağlanma səbəbi: TP / Siqnal / Çevrilmə / Likvidasiya).
@@ -124,9 +128,9 @@ Nümunə `/opt/crypto-jev`, `cryptojev` istifadəçisi və hazır `.venv` fərz 
 İnternetə açarkən HTTPS reverse proxy + `DASHBOARD_USER`/`DASHBOARD_PASSWORD` istifadə edin, 8082-ni loopback-da saxlayın.
 Köhnə `crypto-jev*.service` unit-lərini dayandırıb silin (`systemctl disable --now ...`).
 
-## 23 strategiyalı backtest modulu (`backtest/`)
+## 26 strategiyalı backtest modulu (`backtest/`)
 
-Eyni 23 strategiyanın LONG qaydaları tarixi məlumat üzərində də test edilə bilər (backtest spot, yalnız long, 1×):
+Eyni 26 strategiyanın LONG qaydaları tarixi məlumat üzərində də test edilə bilər (backtest spot, yalnız long, 1×):
 
 ```bash
 python -m backtest --days 183 --capital 2000 --out crypto_strategies_report.html
@@ -149,7 +153,7 @@ node --check app/static/app.js
 
 Testlər futures mühasibatı (long/short, komissiya, sürüşmə, funding, likvidasiya qiyməti,
 equity = kapital + realizə + açıq PnL), 15 $ TP, çevrilmə, limitsiz paralel mövqelər, strategiya leverage-i,
-güzgü SHORT qaydası, 3 YouTube taktikasının giriş/çıxış qaydaları, restart, demo bazarda bütün strategiyalar, Binance futures cavablarının emalı, API təhlükəsizliyi
+güzgü SHORT qaydası, 6 YouTube taktikasının giriş/çıxış qaydaları, restart, demo bazarda bütün strategiyalar, Binance futures cavablarının emalı, API təhlükəsizliyi
 və konfiqurasiya yoxlamalarını əhatə edir.
 
 **Xəbərdarlıq:** bu sistem investisiya məsləhəti deyil. Leverage-li futures real hesabda qısa müddətdə bütün marjanı itirə bilər. Virtual nəticələr real likvidlik, gecikmə

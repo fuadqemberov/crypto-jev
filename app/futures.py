@@ -1,4 +1,4 @@
-"""Futures layer on top of the 23 long-only rules in ``backtest/strategies.py``.
+"""Futures layer on top of the 26 long-only rules in ``backtest/strategies.py``.
 
 Direction
     LONG  – the strategy's own long rule on the real price series.
@@ -42,6 +42,8 @@ LEVERAGE_PROFILE: dict[str, tuple[float, int]] = {
     # YouTube tactics: the sweep and histogram rules use the same formula; the fixed 2:1 rule is
     # capped at the 20x its source trades with (its -0.5 % stop = -10 % of margin there).
     'liq_sweep': (2.0, 100), 'macd_hist': (2.5, 100), 'rr_2to1': (2.0, 20),
+    # ceilings from the videos: 25x for the pull-back rules, 3-5x for the bot signals
+    'ema_pullback': (2.5, 25), 'range_scalp': (2.0, 100), 'confluence': (3.0, 5),
 }
 DEFAULT_PROFILE = (3.0, 100)
 

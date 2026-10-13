@@ -1,4 +1,4 @@
-"""Live paper-trading engine: 23 strategies, 23 independent virtual USDT-M futures wallets.
+"""Live paper-trading engine: 26 strategies, 26 independent virtual USDT-M futures wallets.
 
 Every ``PRICE_REFRESH_SECONDS`` mark prices and funding are refreshed and, for every account:
 funding is settled when a funding time passes, positions hitting maintenance margin are

@@ -19,9 +19,9 @@ def frame(n=600, seed=1):
     return pd.DataFrame(dict(open=open_, high=high, low=low, close=close, volume=vol), index=idx)
 
 
-def test_twenty_three_unique_strategies():
-    assert len(STRATEGIES) == 23
-    assert len({s.key for s in STRATEGIES}) == 23
+def test_twenty_six_unique_strategies():
+    assert len(STRATEGIES) == 26
+    assert len({s.key for s in STRATEGIES}) == 26
 
 
 def test_buy_and_hold_matches_closed_form():
@@ -132,3 +132,46 @@ def test_rr_2to1_exits_only_at_minus_half_or_plus_one_percent():
         if x < len(c):
             r = c[x] / c[e] - 1
             assert r <= -0.005 + 1e-12 or r >= 0.01 - 1e-12
+
+
+def _entries_exits(pos):
+    change = np.diff(np.concatenate([[0.0], pos, [0.0]]))
+    return np.flatnonzero(change > 0), np.flatnonzero(change < 0)
+
+
+def test_ema_pullback_respects_session_filter_and_one_stop_per_day():
+    from backtest.strategies import DAY_MS, _near_session_open
+    df = frame(4000, seed=8)
+    pos = _by_key('ema_pullback').fn(df)
+    entries, exits = _entries_exits(pos)
+    assert len(entries) > 5
+    assert not _near_session_open(df.index[entries]).any()
+    day = np.asarray(df.index, dtype='int64') // DAY_MS
+    for e, x in zip(entries[1:], exits[:-1]):          # pos[x] == 0: the trade ended on bar x
+        assert day[e] != day[x]                         # ...so no new entry on that UTC day
+
+
+def test_range_scalp_buys_bottom_quarter_and_exits_at_top_or_stop():
+    df = frame(4000, seed=7)
+    pos = _by_key('range_scalp').fn(df)
+    entries, _ = _entries_exits(pos)
+    assert len(entries) > 5
+    hi = df.high.rolling(24).max().shift().to_numpy()
+    lo = df.low.rolling(24).min().shift().to_numpy()
+    c = df.close.to_numpy()
+    for e in entries:
+        assert lo[e] < c[e] <= lo[e] + 0.25 * (hi[e] - lo[e])
+
+
+def test_confluence_requires_all_five_filters():
+    from backtest import indicators as ind
+    df = frame(6000, seed=2)
+    pos = _by_key('confluence').fn(df)
+    entries, _ = _entries_exits(pos)
+    assert len(entries) >= 1
+    m50, m200 = ind.sma(df.close, 50).to_numpy(), ind.sma(df.close, 200).to_numpy()
+    st = ind.supertrend(df, 10, 3.0)
+    r = ind.rsi(df.close, 14).to_numpy()
+    c = df.close.to_numpy()
+    for e in entries:
+        assert c[e] > m50[e] > m200[e] and st[e] == 1 and 50 < r[e] < 70

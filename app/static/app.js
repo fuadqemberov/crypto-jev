@@ -1,5 +1,5 @@
 'use strict';
-/* 23 strategy virtual trading dashboard. Read-only: it only GETs /api/* and never changes accounts. */
+/* 26 strategy virtual trading dashboard. Read-only: it only GETs /api/* and never changes accounts. */
 
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 10000;
@@ -29,7 +29,7 @@ function duration(ms) {
 const REASONS = { take_profit: ['TP', 'tp'], signal: ['Siqnal', ''], reverse: ['Çevrilmə', ''], liquidation: ['Likvidasiya', 'liq'] };
 const reasonTag = (r) => { const [t, c] = REASONS[r] || [r, '']; return `<span class="reason ${c}">${esc(t)}</span>`; };
 const sideTag = (side, suffix = '') => `<span class="side ${side === 'LONG' ? 'buy' : 'sell'}">${esc(side)}${suffix}</span>`;
-const color = (i, n = 23) => `hsl(${Math.round(i * 360 / n)}, 72%, 60%)`;
+const color = (i, n = 26) => `hsl(${Math.round(i * 360 / n)}, 72%, 60%)`;
 
 async function getJSON(url) {
   const r = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store', credentials: 'same-origin' });
@@ -203,11 +203,11 @@ function renderDetail(d) {
   const s = d.summary;
   $('s-name').textContent = `${s.order}. ${s.name}`;
   $('s-family').textContent = s.family;
-  $('s-rank').textContent = `· reytinq #${s.rank} / ${state.overview ? state.overview.strategies.length : 23} · başlanğıc ${when(s.started_at)}`;
+  $('s-rank').textContent = `· reytinq #${s.rank} / ${state.overview ? state.overview.strategies.length : 26} · başlanğıc ${when(s.started_at)}`;
   $('s-rules').textContent = 'LONG: ' + d.rules;
   $('s-short').textContent = d.short_rule;
   $('s-lev').textContent = d.leverage_rule + ` Marja: balansın ${d.status.margin_pct}%-i; xalis mənfəət $${d.status.take_profit}-a çatanda bağlanır.`;
-  document.title = `${s.name} — 23 Strategiya`;
+  document.title = `${s.name} — 26 Strategiya`;
   const kpis = [
     ['Balans', money(s.equity), `<span class="${cls(s.return_pct)}">${pct(s.return_pct)}</span> (başlanğıc ${money(s.capital)})`],
     ['Realizə olunmuş PnL', `<span class="${cls(s.realized)}">${money(s.realized, true)}</span>`, 'bağlanmış əməliyyatlar'],
