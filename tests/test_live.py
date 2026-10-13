@@ -1,4 +1,4 @@
-"""Live 20-account USDT-M futures paper engine: accounting, signals, TP, liquidation, funding, API."""
+"""Live 23-account USDT-M futures paper engine: accounting, signals, TP, liquidation, funding, API."""
 from __future__ import annotations
 
 import asyncio
@@ -304,11 +304,11 @@ def test_demo_market_is_deterministic_and_closed_only():
     assert q.price > 0 and q.next_funding > m1.now_ms() and abs(q.funding_rate) < 0.001
 
 
-def test_all_20_strategies_trade_long_and_short_on_demo_market():
+def test_all_strategies_trade_long_and_short_on_demo_market():
     s = settings(demo=True, top_n=6, demo_candle_seconds=10)
     clock = [0.0]
     e = Engine(s, DemoMarket(s, start_ms=T0, clock=lambda: clock[0]), Store(':memory:'))
-    assert len(e.ledger.accounts) == 20
+    assert len(e.ledger.accounts) == len(STRATEGIES)
     for _ in range(30):
         clock[0] += 10.5
         asyncio.run(e.tick())
@@ -339,7 +339,7 @@ def test_api_endpoints_and_security_headers(tmp_path):
         asyncio.run(client.app.state.engine.tick())
         r = client.get('/api/overview')
         body = r.json()
-        assert r.status_code == 200 and len(body['strategies']) == 20 and body['status']['market'] == 'USDT-M futures'
+        assert r.status_code == 200 and len(body['strategies']) == len(STRATEGIES) and body['status']['market'] == 'USDT-M futures'
         assert body['status']['take_profit'] == 15
         assert "script-src 'self'" in r.headers['content-security-policy'] and r.headers['cache-control'] == 'no-store'
         d = client.get('/api/strategy/rsi').json()

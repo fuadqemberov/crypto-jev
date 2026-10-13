@@ -149,6 +149,17 @@ def tema(s: pd.Series, n: int) -> pd.Series:
     return 3 * e1 - 3 * e2 + e3
 
 
+def vix_fix(df: pd.DataFrame, n: int = 22, bb: int = 20, k: float = 2.0, lookback: int = 50,
+            pct: float = 0.85) -> tuple[pd.Series, pd.Series]:
+    """CM Williams Vix Fix. Returns (wvf, green) — green marks a panic-low ("bottom") bar."""
+    top = df.close.rolling(n, min_periods=n).max()
+    wvf = 100 * (top - df.low) / top
+    upper = sma(wvf, bb) + k * wvf.rolling(bb, min_periods=bb).std(ddof=0)
+    range_high = wvf.rolling(lookback, min_periods=lookback).max() * pct
+    green = ((wvf >= upper) | (wvf >= range_high)).fillna(False)
+    return wvf, green
+
+
 def mfi(df: pd.DataFrame, n: int = 14) -> pd.Series:
     tp = (df.high + df.low + df.close) / 3
     flow = tp * df.volume

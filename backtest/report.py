@@ -221,7 +221,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;margin-top:30px}
     <div class="kpis" id="coinKpis" style="margin-top:14px"></div>
   </div>
   <div class="card" style="margin-bottom:16px">
-    <div class="head"><div><h2>İstilik xəritəsi — ən likvid 25 coin × 20 strategiya</h2><div class="sub">Coin üzrə gəlir, %. Likvidlik dövr ərzində orta saatlıq USDT dövriyyəsinə görədir.</div></div></div>
+    <div class="head"><div><h2>İstilik xəritəsi — ən likvid 25 coin × 23 strategiya</h2><div class="sub">Coin üzrə gəlir, %. Likvidlik dövr ərzində orta saatlıq USDT dövriyyəsinə görədir.</div></div></div>
     <div class="tbl-wrap"><table class="heat" id="heatTable"></table></div>
   </div>
   <div class="card">
@@ -437,7 +437,7 @@ el('method').innerHTML=[
   `Benchmark "Al və saxla": eyni kapital bütün coinlərə bərabər bölünüb dövrün əvvəlində alınır və sonunda satılır.`,
   `<b>Xəbərdarlıq:</b> bu hesabat yalnız tarixi simulyasiyadır və investisiya məsləhəti deyil. Keçmiş nəticələr gələcək gəliri təmin etmir; real bazarda likvidlik, sürüşmə və gecikmə nəticələri dəyişə bilər.`
 ].map(x=>`<li>${x}</li>`).join('');
-el('footer').textContent=`Hazırlanıb: ${M.generated} · 20 strategiya backtest modulu · Chart.js ilə`;
+el('footer').textContent=`Hazırlanıb: ${M.generated} · 23 strategiya backtest modulu · Chart.js ilə`;
 })();
 </script>
 </body>

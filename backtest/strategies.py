@@ -1,4 +1,4 @@
-"""20 independent long-only spot strategies.
+"""23 independent long-only spot strategies (20 classic + 3 YouTube tactics).
 
 Each strategy maps an OHLCV frame to a 0/1 position array decided on the bar CLOSE.
 The engine executes that decision at the NEXT bar open, so no future data is used.
@@ -158,6 +158,59 @@ def s_rsi_macd(df):
     return state(cross_up(line, sig) & (r > 50) & (r < 70), cross_down(line, sig) | (r > 78))
 
 
+# --- 3 YouTube tactics (analysed 13 Oct 2026), reduced to what OHLCV alone can express ---------
+
+def s_liq_sweep(df, n=20):
+    """Liquidity / liquidation hunt (Doğan Çakır): price wicks under the 20-bar low where stops and
+    long liquidations cluster, then closes back above it. Target = the opposite pool (20-bar high),
+    stop = the sweep wick low. A liquidation heat-map is not in OHLCV, so swing extremes stand in."""
+    low, high, close = df.low.to_numpy(), df.high.to_numpy(), df.close.to_numpy()
+    pool_lo = df.low.rolling(n).min().shift().to_numpy()
+    pool_hi = df.high.rolling(n).max().shift().to_numpy()
+    pos = np.zeros(len(df))
+    held, stop, target = False, 0.0, 0.0
+    for i in range(len(df)):
+        if held:
+            if close[i] < stop or close[i] >= target:
+                held = False
+        elif not np.isnan(pool_lo[i]) and low[i] < pool_lo[i] < close[i] and pool_hi[i] > close[i]:
+            held, stop, target = True, low[i], pool_hi[i]
+        pos[i] = float(held)
+    return pos
+
+
+def s_macd_hist(df):
+    """MACD histogram colours (video 2): two "dark green" bars in a row (histogram > 0 and rising)
+    with price above the CM Williams Vix Fix support (low of the last green Vix Fix bar) -> long;
+    the first "light green" bar (histogram falling), histogram <= 0 or a support break -> exit."""
+    _, _, h = ind.macd(df.close)
+    _, green = ind.vix_fix(df)
+    support = df.low.where(green).ffill()
+    dark = (h > 0) & (h > h.shift())
+    entry = dark & dark.shift(fill_value=False) & (df.close > support)
+    exit_ = (h < h.shift()) | (h <= 0) | (df.close < support)
+    return state(entry, exit_)
+
+
+def s_rr_2to1(df, stop=0.005, reward=2.0):
+    """Fixed 2:1 risk/reward (video 3): "-10 % stop / +20 % take-profit at 20x" = -0.5 % / +1 % price.
+    Entry: up-trend (EMA20 > EMA50) and close crosses back above the Bollinger middle band."""
+    _, mid, _ = ind.bollinger(df.close)
+    trend = ind.ema(df.close, 20) > ind.ema(df.close, 50)
+    signal = (cross_up(df.close, mid) & trend).fillna(False).to_numpy()
+    close = df.close.to_numpy()
+    pos = np.zeros(len(df))
+    held, lo, hi = False, 0.0, 0.0
+    for i in range(len(df)):
+        if held:
+            if close[i] <= lo or close[i] >= hi:
+                held = False
+        elif signal[i]:
+            held, lo, hi = True, close[i] * (1 - stop), close[i] * (1 + stop * reward)
+        pos[i] = float(held)
+    return pos
+
+
 STRATEGIES: list[Strategy] = [
     Strategy('sma_cross', 'SMA kəsişməsi (20/50)', 'Trend', 'SMA20 SMA50-dən yuxarı olduqda alış mövqeyi, aşağı düşəndə çıxış.', s_sma),
     Strategy('ema_cross', 'EMA kəsişməsi (12/26)', 'Trend', 'EMA12 EMA26-dan yuxarı olduqda mövqedə qalır, əks kəsişmədə çıxır.', s_ema),
@@ -179,4 +232,16 @@ STRATEGIES: list[Strategy] = [
     Strategy('tema', 'Üçqat EMA (TEMA 10/30)', 'Trend', 'TEMA10 TEMA30-dan yuxarı olduqda mövqe açıqdır.', s_tema),
     Strategy('mfi', 'Pul axını indeksi (MFI)', 'Həcm', 'MFI(14) 20-ni yuxarı kəsəndə alış, 80-i aşağı kəsəndə satış.', s_mfi),
     Strategy('rsi_macd', 'RSI + MACD kombinasiyası', 'Momentum', 'MACD yuxarı kəsişməsi və RSI 50–70 arasında olduqda alış; MACD aşağı kəsişməsi və ya RSI>78 olduqda satış.', s_rsi_macd),
+    Strategy('liq_sweep', 'Likvidasiya ovu (Doğan Çakır)', 'Likvidlik',
+             'Şam son 20 şamın minimumunun altına fitil atıb (stop/likvidasiya ovu) yenidən onun üstündə bağlananda alış. '
+             'Hədəf qarşı likvidlik — son 20 şamın maksimumu, stop — ov fitilinin dibi. Likvidasiya xəritəsi OHLCV-də olmadığı üçün swing ekstremumlar istifadə olunur; DCA yoxdur.',
+             s_liq_sweep),
+    Strategy('macd_hist', 'MACD histoqram rəngləri + Vix Fix', 'Momentum',
+             'Histoqram ardıcıl 2 şam „tünd yaşıl“ (>0 və artan) və qiymət CM Williams Vix Fix dəstəyinin (son yaşıl Vix Fix şamının dibi) üstündədirsə alış; '
+             'ilk „açıq yaşıl“ (histoqram azalır), histoqram ≤ 0 və ya dəstək qırılanda çıxış.',
+             s_macd_hist),
+    Strategy('rr_2to1', 'Sabit 2:1 risk/mükafat (−0.5% / +1%)', 'Trend',
+             'EMA20 > EMA50 və qiymət Bollinger orta xəttini yuxarı kəsəndə alış. Stop girişdən −0.5%, hədəf +1% '
+             '(20×-də marjanın −10% / +20%-i). Videodakı BTC istiqamət filtri tək coin məlumatında olmadığı üçün tətbiq edilmir.',
+             s_rr_2to1),
 ]

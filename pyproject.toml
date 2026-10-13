@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "crypto-strategies"
 version = "1.0.0"
-description = "20 technical-analysis strategies, each paper-trading its own 2000 USDT virtual USDT-M futures account on live Binance data"
+description = "23 technical-analysis strategies, each paper-trading its own 2000 USDT virtual USDT-M futures account on live Binance data"
 requires-python = ">=3.12"
 dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "httpx[socks]>=0.27,<1", "python-dotenv>=1,<2", "pandas>=2,<4", "numpy>=1.24"]
 
