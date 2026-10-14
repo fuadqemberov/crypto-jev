@@ -91,6 +91,7 @@ td.empty { text-align: center; color: var(--muted); padding: 28px; }
 .chip.skip { opacity: .65; }
 .reason { font-size: 11px; padding: 1px 6px; border-radius: 3px; background: var(--panel-2); color: var(--muted); }
 .reason.tp { background: #0ecb8118; color: var(--green); }
+.reason.sl { background: #f0b90b1f; color: #f0b90b; }
 .reason.liq { background: #f6465d22; color: var(--red); font-weight: 600; }
 .meter { display: inline-block; width: 46px; height: 5px; border-radius: 3px; background: var(--panel-2); vertical-align: middle; overflow: hidden; }
 .meter-bar { display: block; height: 100%; width: 0; background: var(--green); }

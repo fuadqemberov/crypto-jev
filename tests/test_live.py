@@ -236,7 +236,7 @@ def test_reverse_long_to_short_on_the_same_candle():
 
 def test_liquidation_on_price_poll_and_on_candle_wick():
     m = ScriptedMarket({'AUSDT': [101, 101, 101], 'BUSDT': [101, 101, 101]}, {'AUSDT': 2, 'BUSDT': 1})
-    e = Engine(settings(take_profit=0.0), m, Store(':memory:'), [DIR])
+    e = Engine(settings(take_profit=0.0, stop_loss_pct=0.0), m, Store(':memory:'), [DIR])
     tick(e, m, 0)
     a = e.ledger.accounts['dir'].positions['AUSDT']
     b = e.ledger.accounts['dir'].positions['BUSDT']
@@ -253,6 +253,50 @@ def test_liquidation_on_price_poll_and_on_candle_wick():
     trades = {t['symbol']: t for t in e.store.trades('dir')}
     assert trades['AUSDT']['reason'] == trades['BUSDT']['reason'] == 'liquidation'
     assert trades['BUSDT']['proceeds'] == 0
+
+
+def test_stop_price_is_atr_based_and_capped_before_liquidation():
+    led = ledger(stop_loss_pct=50.0)
+    for side in (1, -1):
+        for lev in (1, 10, 100):
+            cap_stop = led.stop_price(side, 100.0, lev)                     # no ATR -> margin cap
+            assert cap_stop == pytest.approx(100 - side * 50 / lev)
+            assert led.stop_price(side, 100.0, lev, 0.1) == pytest.approx(100 - side * 0.1)   # tighter ATR stop wins
+            assert led.stop_price(side, 100.0, lev, 1e9) == pytest.approx(cap_stop)          # wider one is capped
+    for side in (1, -1):
+        pos = led.open('a', f'S{side + 1}USDT', side, 50, 100.0, T0, 10.0)
+        liq = led.liquidation_price(pos)
+        assert (pos.stop_price - liq) * side > 0                            # stop sits before liquidation
+        assert led.net_pnl(pos, pos.stop_price) > -pos.initial_margin * 0.6  # loses ~50 % of margin, not all
+    assert ledger(stop_loss_pct=0.0).stop_price(1, 100.0, 10, 1.0) == 0.0
+
+
+def test_stop_loss_on_price_poll_and_on_candle_wick_and_restart(tmp_path):
+    m = ScriptedMarket({'AUSDT': [101, 101, 101], 'BUSDT': [101, 101, 101]}, {'AUSDT': 2, 'BUSDT': 1})
+    store = Store(tmp_path / 'f.db')
+    e = Engine(settings(take_profit=0.0), m, store, [DIR])
+    tick(e, m, 0)
+    a = e.ledger.accounts['dir'].positions['AUSDT']
+    b = e.ledger.accounts['dir'].positions['BUSDT']
+    assert a.stop_price > 0 and b.stop_price > 0
+    assert (a.stop_price - e.ledger.liquidation_price(a)) * a.side > 0
+    reloaded = Ledger(e.settings, Store(tmp_path / 'f.db'), ['dir'], T0).accounts['dir'].positions
+    assert reloaded['AUSDT'].stop_price == pytest.approx(a.stop_price)       # persisted across restarts
+    m.live['AUSDT'] = a.stop_price - a.side * 1e-6
+    m.offset = 10 * 60_000
+    tick(e, m)
+    assert 'AUSDT' not in e.ledger.accounts['dir'].positions
+    m.live.clear()
+    m.offset = 60_000
+    tick(e, m, 1)
+    stop_b = b.stop_price
+    assert b.side == 1
+    m.lows['BUSDT'] = e.ledger.liquidation_price(b) * 0.99                 # wick through stop AND liquidation
+    tick(e, m, 2)
+    trades = {t['symbol']: t for t in e.store.trades('dir')}
+    assert trades['AUSDT']['reason'] == trades['BUSDT']['reason'] == 'stop_loss'
+    assert trades['BUSDT']['exit_price'] == pytest.approx(stop_b) and trades['BUSDT']['proceeds'] > 0
+    assert e.overview()['strategies'][0]['stop_losses'] == 2
 
 
 def test_funding_settles_once_when_funding_time_passes():

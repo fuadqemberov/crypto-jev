@@ -75,6 +75,14 @@ def leverage(key: str, atr_pct: float, cap: int) -> int:
     return int(min(ceiling, max(1, math.floor(RISK_PER_TYPICAL_MOVE / (atr_pct * mult)))))
 
 
+def stop_distance(key: str, atr_pct: float, price: float) -> float | None:
+    """The strategy's expected adverse move (ATR multiple × ATR) in price units — used as stop distance."""
+    mult, _ = LEVERAGE_PROFILE.get(key, DEFAULT_PROFILE)
+    if not math.isfinite(atr_pct) or atr_pct <= 0 or not price > 0:
+        return None
+    return mult * atr_pct * price
+
+
 def leverage_rule(key: str, cap: int) -> str:
     mult, own_max = LEVERAGE_PROFILE.get(key, DEFAULT_PROFILE)
     return f'Leverage: ⌊0.5 / (ATR% × {mult:g})⌋, 1× – {min(own_max, cap)}×.'

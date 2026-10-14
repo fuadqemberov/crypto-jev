@@ -11,6 +11,9 @@ and slippage ``s`` per side, opened at price ``p``:
 * funding at each settlement: payment = d·qty·mark·rate is taken from (or added to) the margin
 * liquidation: when M + unrealized ≤ maint_rate·qty·mark the whole margin is lost
 * take profit: closed as soon as the net PnL (after both fees and funding) ≥ TAKE_PROFIT_USDT
+* stop loss: a stop price fixed at the open, ``fill − d·distance``. The distance is the strategy's
+  ATR multiple × ATR(14), but never more than STOP_LOSS_PCT of the margin (STOP_LOSS_PCT/100 · fill / L),
+  so the stop always sits well before the liquidation price (≈ fill · (1/L − maint)).
 
 Open positions are valued at what closing them right now would return, so account equity
 already includes exit costs.
@@ -35,6 +38,7 @@ class Position:
     fee: float              # entry fee
     funding: float          # net funding paid (+) / received (−)
     opened_at: int
+    stop_price: float = 0.0   # 0 = no stop
 
     @property
     def initial_margin(self) -> float:
@@ -75,6 +79,8 @@ class Ledger:
         for p in store.positions():
             if p['key'] in self.accounts:
                 pos = Position(**{k: p[k] for k in Position.__dataclass_fields__})
+                if not pos.stop_price:                     # opened before the stop-loss existed
+                    pos.stop_price = self.stop_price(pos.side, pos.fill_price, pos.leverage)
                 self.accounts[p['key']].positions[p['symbol']] = pos
                 self.last_price.setdefault(p['symbol'], p['entry_price'])
 
@@ -100,6 +106,18 @@ class Ledger:
         if pos.side > 0:
             return max(0.0, (q * e - m) / (q * (1 - mmr)))
         return (m + q * e) / (q * (1 + mmr))
+
+    def stop_price(self, side: int, fill: float, leverage: int, distance: float | None = None) -> float:
+        """Stop at ``distance`` (price units) from the fill, capped at STOP_LOSS_PCT of the margin."""
+        cap_pct = self.settings.stop_loss_pct
+        if cap_pct <= 0 or not fill > 0:
+            return 0.0
+        cap = cap_pct / 100 * fill / max(1, leverage)
+        d = cap if distance is None or not distance > 0 else min(distance, cap)
+        return max(0.0, fill - side * d)
+
+    def is_stopped(self, pos: Position, price: float) -> bool:
+        return pos.stop_price > 0 and (price <= pos.stop_price if pos.side > 0 else price >= pos.stop_price)
 
     def is_liquidated(self, pos: Position, price: float) -> bool:
         return pos.margin + self.unrealized(pos, price) <= self.settings.maint_margin_rate * pos.qty * price
@@ -131,7 +149,8 @@ class Ledger:
         margin = min(target, affordable)
         return margin if margin >= self.settings.min_margin else 0.0
 
-    def open(self, key: str, symbol: str, side: int, leverage: int, price: float, ts: int) -> Position | None:
+    def open(self, key: str, symbol: str, side: int, leverage: int, price: float, ts: int,
+             stop_distance: float | None = None) -> Position | None:
         acc = self.accounts[key]
         if symbol in acc.positions or side not in (1, -1) or not price > 0 or leverage < 1:
             return None
@@ -141,7 +160,8 @@ class Ledger:
         notional = margin * leverage
         fill = price * (1 + side * self.settings.slippage_rate)
         fee = notional * self.settings.fee_rate
-        pos = Position(symbol, side, leverage, notional / fill, price, fill, margin, fee, 0.0, ts)
+        pos = Position(symbol, side, leverage, notional / fill, price, fill, margin, fee, 0.0, ts,
+                       self.stop_price(side, fill, leverage, stop_distance))
         cash = acc.cash - margin - fee
         self.store.open_position(key, cash, asdict(pos))
         acc.cash = cash

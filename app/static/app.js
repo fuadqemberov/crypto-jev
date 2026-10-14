@@ -26,7 +26,7 @@ function duration(ms) {
   const h = ms / 3600000;
   return h >= 48 ? (h / 24).toFixed(1) + ' gün' : h >= 1 ? h.toFixed(1) + ' saat' : Math.round(ms / 60000) + ' dəq';
 }
-const REASONS = { take_profit: ['TP', 'tp'], signal: ['Siqnal', ''], reverse: ['Çevrilmə', ''], liquidation: ['Likvidasiya', 'liq'] };
+const REASONS = { take_profit: ['TP', 'tp'], signal: ['Siqnal', ''], reverse: ['Çevrilmə', ''], liquidation: ['Likvidasiya', 'liq'], stop_loss: ['Stop', 'sl'] };
 const reasonTag = (r) => { const [t, c] = REASONS[r] || [r, '']; return `<span class="reason ${c}">${esc(t)}</span>`; };
 const sideTag = (side, suffix = '') => `<span class="side ${side === 'LONG' ? 'buy' : 'sell'}">${esc(side)}${suffix}</span>`;
 const color = (i, n = 26) => `hsl(${Math.round(i * 360 / n)}, 72%, 60%)`;
@@ -66,7 +66,7 @@ function renderStatus(st) {
   mode.textContent = st.mode === 'demo' ? 'DEMO · SİNTETİK FUTURES' : 'USDT-M FUTURES · VİRTUAL HESAB';
   mode.className = 'mode' + (st.mode === 'demo' ? ' demo' : '');
   $('st-tf').textContent = st.timeframe;
-  $('st-rules').textContent = `${st.take_profit > 0 ? '$' + st.take_profit : 'yox'} · marja ${st.margin_pct}% · maks ${st.max_leverage}×`;
+  $('st-rules').textContent = `${st.take_profit > 0 ? '$' + st.take_profit : 'yox'} · stop ${st.stop_loss_pct > 0 ? '≤' + st.stop_loss_pct + '% marja' : 'yox'} · marja ${st.margin_pct}% · maks ${st.max_leverage}×`;
   $('st-universe').textContent = st.universe ? `${st.universe}${st.symbols === 'ALL' ? ' (top ' + st.top_n + ')' : ''}` : '—';
   $('st-candle').textContent = when(st.last_candle);
   const age = st.last_price_at ? Math.round((Date.now() - st.last_price_at) / 1000) : null;
@@ -145,6 +145,7 @@ const COLUMNS = [
   ['profit_factor', 'Mənfəət faktoru', (s) => pf(s.profit_factor)],
   ['max_dd_pct', 'Maks. geriləmə', (s) => `<span class="neg">${isNum(s.max_dd_pct) && s.max_dd_pct > 0 ? '-' + s.max_dd_pct.toFixed(2) + '%' : '0.00%'}</span>`],
   ['take_profits', 'TP bağlanış', (s) => s.take_profits],
+  ['stop_losses', 'Stop', (s) => s.stop_losses || 0],
   ['liquidations', 'Likvidasiya', (s) => s.liquidations ? `<span class="neg">${s.liquidations}</span>` : '0'],
   ['avg_leverage', 'Ort. leverage', (s) => isNum(s.avg_leverage) ? s.avg_leverage.toFixed(1) + '×' : '—'],
   ['open_positions', 'Açıq L / S', (s) => `<span class="pos">${s.open_long}</span> / <span class="neg">${s.open_short}</span>`],
@@ -167,7 +168,7 @@ function renderOverview(ov) {
     ['Mənfəətdə olan', `${winners} / ${rows.length}`, 'strategiya'],
     ['Benchmark', b ? `<span class="${cls(b.return_pct)}">${pct(b.return_pct)}</span>` : '—', b ? `${esc(b.symbol)} al və saxla · ${beat} strategiya qabaqdadır` : 'ilk şamdan sonra'],
     ['Cəmi əməliyyat', rows.reduce((a, s) => a + s.trades, 0), `${rows.reduce((a, s) => a + s.open_positions, 0)} açıq mövqe`],
-    [`TP ($${ov.status.take_profit}) / likvidasiya`, `${rows.reduce((a, s) => a + s.take_profits, 0)} / ${rows.reduce((a, s) => a + s.liquidations, 0)}`, 'bağlanmış əməliyyatlar'],
+    [`TP ($${ov.status.take_profit}) / stop / likvidasiya`, `${rows.reduce((a, s) => a + s.take_profits, 0)} / ${rows.reduce((a, s) => a + (s.stop_losses || 0), 0)} / ${rows.reduce((a, s) => a + s.liquidations, 0)}`, 'bağlanmış əməliyyatlar'],
   ].map(([t, v, sub]) => `<div class="kpi"><small>${t}</small><strong>${v.toString().startsWith('<') ? v : esc(v)}</strong><span>${sub}</span></div>`).join('');
 
   const { col, dir } = state.sort;
@@ -206,7 +207,8 @@ function renderDetail(d) {
   $('s-rank').textContent = `· reytinq #${s.rank} / ${state.overview ? state.overview.strategies.length : 26} · başlanğıc ${when(s.started_at)}`;
   $('s-rules').textContent = 'LONG: ' + d.rules;
   $('s-short').textContent = d.short_rule;
-  $('s-lev').textContent = d.leverage_rule + ` Marja: balansın ${d.status.margin_pct}%-i; xalis mənfəət $${d.status.take_profit}-a çatanda bağlanır.`;
+  $('s-lev').textContent = d.leverage_rule + ` Marja: balansın ${d.status.margin_pct}%-i; xalis mənfəət $${d.status.take_profit}-a çatanda bağlanır.` +
+    (d.status.stop_loss_pct > 0 ? ` Stop-loss: giriş ∓ ATR əmsalı × ATR(14), zərər marjanın ən çox ${d.status.stop_loss_pct}%-i.` : ' Stop-loss söndürülüb.');
   document.title = `${s.name} — 26 Strategiya`;
   const kpis = [
     ['Balans', money(s.equity), `<span class="${cls(s.return_pct)}">${pct(s.return_pct)}</span> (başlanğıc ${money(s.capital)})`],
@@ -215,7 +217,7 @@ function renderDetail(d) {
     ['Sərbəst marja', money(s.cash), `istifadədə ${money(s.used_margin)}`],
     ['Nominal / balans', s.effective_leverage.toFixed(2), `açıq mövqelərin cəmi ${money(s.notional)} — order leverage-i deyil`],
     ['Əməliyyat sayı', s.trades, `${s.long_trades} long · ${s.short_trades} short · ${s.wins} uduş`],
-    ['TP / likvidasiya', `${s.take_profits} / ${s.liquidations}`, `ort. leverage ${isNum(s.avg_leverage) ? s.avg_leverage.toFixed(1) + '×' : '—'}`],
+    ['TP / stop / likvidasiya', `${s.take_profits} / ${s.stop_losses || 0} / ${s.liquidations}`, `ort. leverage ${isNum(s.avg_leverage) ? s.avg_leverage.toFixed(1) + '×' : '—'}`],
     ['Funding', `<span class="${cls(-s.funding)}">${money(-s.funding, true)}</span>`, 'alınan (+) / ödənilən (−)'],
     ['Uduş faizi', isNum(s.win_rate) ? s.win_rate.toFixed(1) + '%' : '—', 'bağlanmış əməliyyatlar'],
     ['Mənfəət faktoru', pf(s.profit_factor), 'ümumi qazanc / ümumi itki'],
@@ -248,12 +250,12 @@ function renderDetail(d) {
 
   const tp = d.status.take_profit;
   $('s-pos-note').textContent = `${d.positions.length} paralel mövqe (limit yoxdur, yalnız sərbəst marja)`;
-  $('s-positions').innerHTML = '<thead><tr><th>Coin</th><th class="l">İstiqamət</th><th>Lev.</th><th>Açılış</th><th>Giriş</th><th>Mark</th><th>Likv. qiyməti</th><th>Marja</th><th>Nominal</th><th>Funding</th><th>Xalis PnL</th><th>% marja</th><th>TP-yə</th></tr></thead><tbody>' +
+  $('s-positions').innerHTML = '<thead><tr><th>Coin</th><th class="l">İstiqamət</th><th>Lev.</th><th>Açılış</th><th>Giriş</th><th>Mark</th><th>Stop</th><th>Likv. qiyməti</th><th>Marja</th><th>Nominal</th><th>Funding</th><th>Xalis PnL</th><th>% marja</th><th>TP-yə</th></tr></thead><tbody>' +
     (d.positions.length ? d.positions.map((p) => `<tr><td><b>${esc(p.symbol)}</b></td><td class="l">${sideTag(p.side)}</td><td>${p.leverage}×</td><td>${when(p.opened_at)}</td>
-      <td>${price(p.entry_price)}</td><td>${price(p.price)}</td><td class="muted">${price(p.liq_price)}</td><td>${money(p.margin)}</td><td>${money(p.notional)}</td>
+      <td>${price(p.entry_price)}</td><td>${price(p.price)}</td><td>${p.stop_price ? price(p.stop_price) : '—'}</td><td class="muted">${price(p.liq_price)}</td><td>${money(p.margin)}</td><td>${money(p.notional)}</td>
       <td class="${cls(-p.funding)}">${money(-p.funding, true)}</td><td class="${cls(p.pnl)}">${money(p.pnl, true)}</td><td class="${cls(p.ret_pct)}">${pct(p.ret_pct)}</td>
       <td>${tp > 0 ? `<span class="meter"><span class="meter-bar ${p.pnl < 0 ? 'neg' : ''}" data-w="${Math.max(0, Math.min(100, p.pnl / tp * 100)).toFixed(0)}"></span></span> ${money(Math.max(0, tp - p.pnl))}` : '—'}</td></tr>`).join('')
-      : '<tr><td colspan="13" class="empty">Açıq mövqe yoxdur</td></tr>') + '</tbody>';
+      : '<tr><td colspan="14" class="empty">Açıq mövqe yoxdur</td></tr>') + '</tbody>';
   document.querySelectorAll('#s-positions .meter-bar').forEach((el) => { el.style.width = el.dataset.w + '%'; });
 
   $('s-trades-note').textContent = `son ${d.trades.length} əməliyyat`;

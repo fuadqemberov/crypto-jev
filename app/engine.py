@@ -2,7 +2,8 @@
 
 Every ``PRICE_REFRESH_SECONDS`` mark prices and funding are refreshed and, for every account:
 funding is settled when a funding time passes, positions hitting maintenance margin are
-liquidated, and positions whose net PnL reached ``TAKE_PROFIT_USDT`` are closed.
+liquidated, positions crossing their stop-loss are closed and positions whose net PnL reached
+``TAKE_PROFIT_USDT`` are closed.
 
 When a new candle closes the universe (top-N USDT perpetuals by 24h volume) is refreshed, closed
 candles are loaded and each strategy decides a direction (long / short / flat, see app/futures.py):
@@ -27,7 +28,7 @@ import pandas as pd
 from backtest.strategies import STRATEGIES, Strategy
 
 from .config import Settings
-from .futures import Signal, evaluate, leverage, leverage_rule
+from .futures import Signal, evaluate, leverage, leverage_rule, stop_distance
 from .ledger import Ledger, Position
 from .store import Store
 
@@ -117,6 +118,8 @@ class Engine:
                     continue
                 if self.ledger.is_liquidated(pos, price):
                     self._close(s, pos, self.ledger.liquidation_price(pos) or price, now, 'liquidation')
+                elif self.ledger.is_stopped(pos, price):
+                    self._close(s, pos, price, now, 'stop_loss')          # stop-market: filled at the current mark
                 elif tp > 0 and self.ledger.net_pnl(pos, price) >= tp:
                     self._close(s, pos, price, now, 'take_profit')
 
@@ -197,7 +200,8 @@ class Engine:
                 if not sig or sig.cur == 0 or sig.prev == sig.cur or symbol in acc.positions:
                     continue
                 lev = leverage(s.key, sig.atr_pct, self.settings.max_leverage)
-                pos = self.ledger.open(s.key, symbol, sig.cur, lev, self._price(symbol, data), ts)
+                px = self._price(symbol, data)
+                pos = self.ledger.open(s.key, symbol, sig.cur, lev, px, ts, stop_distance(s.key, sig.atr_pct, px))
                 if pos:
                     entries.append({'symbol': symbol, 'side': SIDE[sig.cur], 'leverage': lev})
                     self._event(ts, s, 'OPEN', pos, pos.entry_price)
@@ -218,15 +222,19 @@ class Engine:
         log.info('Şam %s işləndi: %d coin, %.1f s', closed, len(data), self.candle_seconds)
 
     def _candle_liquidations(self, data: dict[str, pd.DataFrame], closed: int, ts: int) -> None:
-        """Wicks between two price polls: a position held through the whole candle is liquidated
-        if the candle's low (long) / high (short) crossed its liquidation price."""
+        """Wicks between two price polls: for a position held through the whole candle, a low (long) /
+        high (short) through the stop closes it at the stop; one through the liquidation price
+        without a stop in between liquidates it. The stop always sits before the liquidation price."""
         for s in self.strategies:
             for symbol, pos in list(self.ledger.accounts[s.key].positions.items()):
                 if symbol not in data or pos.opened_at > closed:
                     continue
                 bar = data[symbol].iloc[-1]
+                extreme = bar.low if pos.side > 0 else bar.high
                 liq = self.ledger.liquidation_price(pos)
-                if (pos.side > 0 and bar.low <= liq) or (pos.side < 0 and bar.high >= liq):
+                if self.ledger.is_stopped(pos, extreme):
+                    self._close(s, pos, pos.stop_price, ts, 'stop_loss')
+                elif (pos.side > 0 and bar.low <= liq) or (pos.side < 0 and bar.high >= liq):
                     self._close(s, pos, liq, ts, 'liquidation')
 
     def _close(self, s: Strategy, pos: Position, price: float, ts: int, reason: str) -> dict | None:
@@ -274,6 +282,7 @@ class Engine:
             'avg_hold_hours': float(st['avg_hold']) / 3_600_000 if n else None,
             'avg_leverage': float(st['avg_lev']) if n else None,
             'take_profits': int(st.get('tp') or 0), 'liquidations': int(st.get('liq') or 0),
+            'stop_losses': int(st.get('sl') or 0),
             'long_trades': int(st.get('longs') or 0), 'short_trades': int(st.get('shorts') or 0),
             'max_dd_pct': acc.max_dd * 100, 'open_positions': len(positions),
             'open_long': sum(1 for p in positions if p.side > 0), 'open_short': sum(1 for p in positions if p.side < 0),
@@ -290,6 +299,7 @@ class Engine:
             'symbols': 'ALL' if self.settings.symbols == ('ALL',) else ','.join(self.settings.symbols),
             'top_n': self.settings.top_n, 'capital': self.settings.capital,
             'margin_pct': self.settings.margin_pct, 'take_profit': self.settings.take_profit,
+            'stop_loss_pct': self.settings.stop_loss_pct,
             'max_leverage': self.settings.max_leverage,
             'fee_pct': self.settings.fee_rate * 100, 'slippage_pct': self.settings.slippage_rate * 100,
             'candle_seconds': self.candle_seconds, 'error': self.last_error,
@@ -322,6 +332,7 @@ class Engine:
             positions.append({'symbol': p.symbol, 'side': SIDE[p.side], 'leverage': p.leverage, 'qty': p.qty,
                               'entry_price': p.entry_price, 'price': self.ledger.mark(p), 'margin': p.margin,
                               'notional': p.qty * self.ledger.mark(p), 'liq_price': self.ledger.liquidation_price(p),
+                              'stop_price': p.stop_price or None,
                               'pnl': pnl, 'ret_pct': pnl / p.initial_margin * 100, 'funding': p.funding,
                               'opened_at': p.opened_at})
         positions.sort(key=lambda p: p['opened_at'], reverse=True)

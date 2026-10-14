@@ -34,7 +34,7 @@ işlədin. Şəbəkəsiz sınaq: `DEMO_MODE=true` — sintetik futures bazarı, 
 | LONG | Strategiyanın öz qaydası (`backtest/strategies.py`) bağlanmış şamda. |
 | SHORT | Eyni qayda qiymətin **güzgü seriyasına** (hər qiymət → 1/qiymət, high↔low) tətbiq olunur — bazarın tam əksi. Məs. SMA20 SMA50-nin altına düşəndə, RSI 70-i aşağı kəsəndə, Donçian minimumu qırılanda SHORT. |
 | Açılış | İstiqamət bağlanmış şamda dəyişibsə (təzə siqnal). Eyni şamda LONG→SHORT olarsa köhnə bağlanır, yenisi açılır („Çevrilmə“). |
-| Bağlanış | 1) xalis mənfəət ≥ **`TAKE_PROFIT_USDT` (15 $)** — hər 15 s yoxlanır; 2) strategiyanın istiqaməti dəyişəndə; 3) likvidasiya. |
+| Bağlanış | 1) xalis mənfəət ≥ **`TAKE_PROFIT_USDT` (15 $)** — hər 15 s yoxlanır; 2) **stop-loss** (aşağıya bax) — hər 15 s və şamın high/low-u ilə; 3) strategiyanın istiqaməti dəyişəndə; 4) likvidasiya (yalnız stop söndürülübsə və ya qiymət stopdan sıçrayıb keçərsə). |
 | Paralel | **Mövqe sayına limit yoxdur.** Hər coin-də bir strategiyanın bir mövqeyi ola bilər; yeni mövqe yalnız sərbəst marja çatmayanda buraxılır. Çox siqnal gələndə həcmi böyük coin üstündür. |
 | Marja | Hər mövqe: cari balansın `ORDER_MARGIN_PCT` (5% → ~100 $), isolated margin. Nominal = marja × leverage. |
 | Xərc | Hər tərəfə 0.05% taker komissiyası + 0.05% sürüşmə; hər 8 saatlıq funding (long müsbət dərəcədə ödəyir, short alır) marjadan çıxılır/əlavə olunur. |
@@ -74,6 +74,22 @@ real limit 20–75×-dir. Simulyasiya bu coin-limitlərini tətbiq etmir (onlar 
 istəsəniz `MAX_LEVERAGE` ilə ümumi həddi azaldın. 100×-də likvidasiya ~0.5% əks hərəkətdədir.
 
 Profil `app/futures.py` faylındadır (`LEVERAGE_PROFILE`).
+
+### Stop-loss
+
+Hər mövqe açılanda stop qiyməti qeyd olunur və dəyişmir:
+
+```text
+stop = giriş ∓ min(ATR_əmsalı × ATR(14),  STOP_LOSS_PCT% × giriş / leverage)
+```
+
+- Məsafə strategiyanın gözlədiyi əks hərəkətdir (leverage ilə eyni ATR əmsalı), amma zərər heç vaxt marjanın
+  `STOP_LOSS_PCT`-indən (default **50%**) çox olmur. Likvidasiya ~100% zərərdə olduğu üçün stop həmişə ondan əvvəl gəlir.
+- Hər 15 saniyədə mark qiymətlə yoxlanır (stop-market — cari qiymətlə bağlanır) və hər şam bağlananda şamın
+  high/low-u ilə (fitil stopu keçibsə — stop qiymətində bağlanır).
+- Dashboard-da səbəb **Stop**, açıq mövqelərdə stop qiyməti, reytinqdə stop sayı görünür.
+- `STOP_LOSS_PCT=0` stopu söndürür (köhnə davranış: yalnız siqnal, TP və likvidasiya).
+- Stop-dan əvvəl açılmış mövqelərə restart-da marja limitinə görə (50%) stop verilir.
 
 ## YouTube taktikaları (21–26)
 
@@ -151,7 +167,7 @@ Backtest spot, long-only və leverage-siz olduğu üçün canlı futures nətic�
 node --check app/static/app.js
 ```
 
-Testlər futures mühasibatı (long/short, komissiya, sürüşmə, funding, likvidasiya qiyməti,
+Testlər futures mühasibatı (long/short, komissiya, sürüşmə, funding, likvidasiya qiyməti, stop-loss,
 equity = kapital + realizə + açıq PnL), 15 $ TP, çevrilmə, limitsiz paralel mövqelər, strategiya leverage-i,
 güzgü SHORT qaydası, 6 YouTube taktikasının giriş/çıxış qaydaları, restart, demo bazarda bütün strategiyalar, Binance futures cavablarının emalı, API təhlükəsizliyi
 və konfiqurasiya yoxlamalarını əhatə edir.

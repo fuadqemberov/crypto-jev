@@ -22,6 +22,7 @@ class Settings:
     margin_pct: float = 5.0              # margin per order, % of the account's current equity
     min_margin: float = 5.0              # smallest margin worth opening (USDT)
     take_profit: float = 15.0            # close as soon as net PnL of a position >= this (USDT); 0 = off
+    stop_loss_pct: float = 50.0          # stop-loss: at most this % of the margin may be lost; 0 = off
     max_leverage: int = 100              # global ceiling for the leverage a strategy may choose
     fee_rate: float = 0.0005             # taker fee per side (Binance USDT-M default 0.05%)
     slippage_rate: float = 0.0005
@@ -48,7 +49,7 @@ class Settings:
             if type(value) is not int or not low <= value <= high:
                 raise ValueError(f'{name.upper()} {low}–{high} aralığında tam ədəd olmalıdır.')
         for name, low, high in [('capital', 10, 10_000_000), ('margin_pct', 0.1, 100), ('min_margin', 0.1, 10_000),
-                                ('take_profit', 0, 1_000_000), ('fee_rate', 0, 0.01), ('slippage_rate', 0, 0.01),
+                                ('take_profit', 0, 1_000_000), ('stop_loss_pct', 0, 90), ('fee_rate', 0, 0.01), ('slippage_rate', 0, 0.01),
                                 ('maint_margin_rate', 0, 0.1), ('demo_candle_seconds', 1, 3600)]:
             value = getattr(self, name)
             if not isinstance(value, (int, float)) or not math.isfinite(value) or not low <= value <= high:
@@ -80,6 +81,7 @@ class Settings:
             top_n=int(env('TOP_N', '50')), timeframe=env('TIMEFRAME', '1h').strip(),
             capital=float(env('START_CAPITAL', '2000')), margin_pct=float(env('ORDER_MARGIN_PCT', '5')),
             min_margin=float(env('MIN_MARGIN_USDT', '5')), take_profit=float(env('TAKE_PROFIT_USDT', '15')),
+            stop_loss_pct=float(env('STOP_LOSS_PCT', '50')),
             max_leverage=int(env('MAX_LEVERAGE', '100')),
             fee_rate=float(env('FEE_RATE', '0.0005')), slippage_rate=float(env('SLIPPAGE_RATE', '0.0005')),
             maint_margin_rate=float(env('MAINT_MARGIN_RATE', '0.005')),

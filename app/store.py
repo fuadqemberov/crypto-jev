@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 CREATE TABLE IF NOT EXISTS positions (
     key TEXT NOT NULL, symbol TEXT NOT NULL, side INTEGER NOT NULL, leverage INTEGER NOT NULL,
     qty REAL NOT NULL, entry_price REAL NOT NULL, fill_price REAL NOT NULL, margin REAL NOT NULL,
-    fee REAL NOT NULL, funding REAL NOT NULL, opened_at INTEGER NOT NULL,
+    fee REAL NOT NULL, funding REAL NOT NULL, opened_at INTEGER NOT NULL, stop_price REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (key, symbol));
 CREATE TABLE IF NOT EXISTS trades (
     id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, symbol TEXT NOT NULL, side INTEGER NOT NULL,
@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS equity (
     key TEXT NOT NULL, ts INTEGER NOT NULL, equity REAL NOT NULL, PRIMARY KEY (key, ts));
 """
 
-POSITION_COLUMNS = ('symbol', 'side', 'leverage', 'qty', 'entry_price', 'fill_price', 'margin', 'fee', 'funding', 'opened_at')
+POSITION_COLUMNS = ('symbol', 'side', 'leverage', 'qty', 'entry_price', 'fill_price', 'margin', 'fee', 'funding', 'opened_at',
+                    'stop_price')
 TRADE_COLUMNS = ('symbol', 'side', 'leverage', 'qty', 'entry_price', 'exit_price', 'margin', 'notional', 'proceeds',
                  'pnl', 'ret', 'fees', 'funding', 'opened_at', 'closed_at', 'reason')
 
@@ -41,6 +42,9 @@ class Store:
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.execute('PRAGMA synchronous=NORMAL')
         self.db.executescript(SCHEMA)
+        cols = {r['name'] for r in self.db.execute('PRAGMA table_info(positions)')}
+        if 'stop_price' not in cols:                      # databases created before the stop-loss
+            self.db.execute('ALTER TABLE positions ADD COLUMN stop_price REAL NOT NULL DEFAULT 0')
         self.db.commit()
 
     def close(self) -> None:
@@ -100,7 +104,7 @@ class Store:
                    SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END) gross_win,
                    -SUM(CASE WHEN pnl < 0 THEN pnl ELSE 0 END) gross_loss,
                    AVG(ret) avg_ret, MAX(ret) best, MIN(ret) worst, AVG(closed_at - opened_at) avg_hold,
-                   SUM(reason = 'take_profit') tp, SUM(reason = 'liquidation') liq,
+                   SUM(reason = 'take_profit') tp, SUM(reason = 'liquidation') liq, SUM(reason = 'stop_loss') sl,
                    SUM(side = 1) longs, SUM(side = -1) shorts, AVG(leverage) avg_lev
             FROM trades GROUP BY key""")
         return {r['key']: dict(r) for r in rows}
