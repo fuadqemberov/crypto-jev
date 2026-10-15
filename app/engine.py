@@ -120,6 +120,8 @@ class Engine:
                     self._close(s, pos, self.ledger.liquidation_price(pos) or price, now, 'liquidation')
                 elif self.ledger.is_stopped(pos, price):
                     self._close(s, pos, price, now, 'stop_loss')          # stop-market: filled at the current mark
+                elif self.ledger.is_target(pos, price):
+                    self._close(s, pos, price, now, 'take_profit')        # R-multiple target reached
                 elif tp > 0 and self.ledger.net_pnl(pos, price) >= tp:
                     self._close(s, pos, price, now, 'take_profit')
 
@@ -199,7 +201,7 @@ class Engine:
                 sig = st.get(symbol)
                 if not sig or sig.cur == 0 or sig.prev == sig.cur or symbol in acc.positions:
                     continue
-                lev = leverage(s.key, sig.atr_pct, self.settings.max_leverage)
+                lev = leverage(s.key, sig.atr_pct, self.settings.max_leverage, self.settings.risk_per_move)
                 px = self._price(symbol, data)
                 pos = self.ledger.open(s.key, symbol, sig.cur, lev, px, ts, stop_distance(s.key, sig.atr_pct, px))
                 if pos:
@@ -236,6 +238,8 @@ class Engine:
                     self._close(s, pos, pos.stop_price, ts, 'stop_loss')
                 elif (pos.side > 0 and bar.low <= liq) or (pos.side < 0 and bar.high >= liq):
                     self._close(s, pos, liq, ts, 'liquidation')
+                elif self.ledger.is_target(pos, bar.high if pos.side > 0 else bar.low):
+                    self._close(s, pos, pos.tp_price, ts, 'take_profit')     # wick reached the target
 
     def _close(self, s: Strategy, pos: Position, price: float, ts: int, reason: str) -> dict | None:
         trade = self.ledger.close(s.key, pos.symbol, price, ts, reason)
@@ -299,7 +303,8 @@ class Engine:
             'symbols': 'ALL' if self.settings.symbols == ('ALL',) else ','.join(self.settings.symbols),
             'top_n': self.settings.top_n, 'capital': self.settings.capital,
             'margin_pct': self.settings.margin_pct, 'take_profit': self.settings.take_profit,
-            'stop_loss_pct': self.settings.stop_loss_pct,
+            'stop_loss_pct': self.settings.stop_loss_pct, 'tp_r_multiple': self.settings.tp_r_multiple,
+            'risk_per_move': self.settings.risk_per_move,
             'max_leverage': self.settings.max_leverage,
             'fee_pct': self.settings.fee_rate * 100, 'slippage_pct': self.settings.slippage_rate * 100,
             'candle_seconds': self.candle_seconds, 'error': self.last_error,
@@ -332,7 +337,7 @@ class Engine:
             positions.append({'symbol': p.symbol, 'side': SIDE[p.side], 'leverage': p.leverage, 'qty': p.qty,
                               'entry_price': p.entry_price, 'price': self.ledger.mark(p), 'margin': p.margin,
                               'notional': p.qty * self.ledger.mark(p), 'liq_price': self.ledger.liquidation_price(p),
-                              'stop_price': p.stop_price or None,
+                              'stop_price': p.stop_price or None, 'tp_price': p.tp_price or None,
                               'pnl': pnl, 'ret_pct': pnl / p.initial_margin * 100, 'funding': p.funding,
                               'opened_at': p.opened_at})
         positions.sort(key=lambda p: p['opened_at'], reverse=True)
@@ -345,7 +350,7 @@ class Engine:
             'status': self.status(), 'summary': {**self._summary(key, stats), 'rank': rank[key]},
             'rules': s.rules, 'short_rule': 'SHORT: eyni qayda qiymətin güzgü seriyasına (1/qiymət) tətbiq olunur — '
                                             'yəni bazarın tam əksi üçün alış siqnalı SHORT açır.',
-            'leverage_rule': leverage_rule(key, self.settings.max_leverage),
+            'leverage_rule': leverage_rule(key, self.settings.max_leverage, self.settings.risk_per_move),
             'positions': positions, 'trades': trades,
             'signals': self.signals.get(key, {'entries': [], 'exits': [], 'skipped': [], 'long': [], 'short': []}),
             'equity': downsample(self.store.equity(key)), 'benchmark': downsample(self.store.equity(BENCHMARK)),

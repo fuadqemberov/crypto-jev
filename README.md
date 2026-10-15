@@ -34,7 +34,7 @@ işlədin. Şəbəkəsiz sınaq: `DEMO_MODE=true` — sintetik futures bazarı, 
 | LONG | Strategiyanın öz qaydası (`backtest/strategies.py`) bağlanmış şamda. |
 | SHORT | Eyni qayda qiymətin **güzgü seriyasına** (hər qiymət → 1/qiymət, high↔low) tətbiq olunur — bazarın tam əksi. Məs. SMA20 SMA50-nin altına düşəndə, RSI 70-i aşağı kəsəndə, Donçian minimumu qırılanda SHORT. |
 | Açılış | İstiqamət bağlanmış şamda dəyişibsə (təzə siqnal). Eyni şamda LONG→SHORT olarsa köhnə bağlanır, yenisi açılır („Çevrilmə“). |
-| Bağlanış | 1) xalis mənfəət ≥ **`TAKE_PROFIT_USDT` (15 $)** — hər 15 s yoxlanır; 2) **stop-loss** (aşağıya bax) — hər 15 s və şamın high/low-u ilə; 3) strategiyanın istiqaməti dəyişəndə; 4) likvidasiya (yalnız stop söndürülübsə və ya qiymət stopdan sıçrayıb keçərsə). |
+| Bağlanış | 1) **take-profit = 1.5R** (stop məsafəsinin 1.5 qatı, `TP_R_MULTIPLE`) — hər 15 s və şamın high/low-u ilə; istəyə görə sabit `TAKE_PROFIT_USDT` (default söndürülüb); 2) **stop-loss** (aşağıya bax) — hər 15 s və şamın high/low-u ilə; 3) strategiyanın istiqaməti dəyişəndə; 4) likvidasiya (yalnız stop söndürülübsə və ya qiymət stopdan sıçrayıb keçərsə). |
 | Paralel | **Mövqe sayına limit yoxdur.** Hər coin-də bir strategiyanın bir mövqeyi ola bilər; yeni mövqe yalnız sərbəst marja çatmayanda buraxılır. Çox siqnal gələndə həcmi böyük coin üstündür. |
 | Marja | Hər mövqe: cari balansın `ORDER_MARGIN_PCT` (5% → ~100 $), isolated margin. Nominal = marja × leverage. |
 | Xərc | Hər tərəfə 0.05% taker komissiyası + 0.05% sürüşmə; hər 8 saatlıq funding (long müsbət dərəcədə ödəyir, short alır) marjadan çıxılır/əlavə olunur. |
@@ -46,12 +46,11 @@ işlədin. Şəbəkəsiz sınaq: `DEMO_MODE=true` — sintetik futures bazarı, 
 Hər strategiya gözlədiyi əks hərəkəti ATR(14) əmsalı ilə bəyan edir. Hər girişdə:
 
 ```text
-leverage = floor(0.5 / (ATR% × atr_əmsalı)),  1× … MAX_LEVERAGE (default 100×)
+leverage = floor(RISK_PER_MOVE / (ATR% × atr_əmsalı)),  1× … MAX_LEVERAGE (default 100×), RISK_PER_MOVE = 0.25
 ```
 
-Yəni strategiyanın tipik əks hərəkəti marjanın ən çox ~50%-ni aparır, likvidasiya isə təxminən iki dəfə uzaqdadır.
-Sakit coin-də leverage yüksək (100×-ə qədər), dəyişkən coin-də aşağı (1×-ə qədər) olur. Məsələn ATR% = 0.4% olan
-coin-də RSI (əmsal 2.0) 62×, Donçian (əmsal 3.5) 35× seçir; ATR% = 3% olan coin-də uyğun olaraq 8× və 4×.
+Yəni strategiyanın tipik əks hərəkəti (= stop məsafəsi) marjanın ~25%-ni aparır, likvidasiya isə təxminən dörd dəfə uzaqdadır.
+Sakit coin-də leverage yüksək, dəyişkən coin-də aşağı olur. Məsələn ATR% = 0.5% olan coin-də Supertrend (əmsal 3.0) 16× seçir; ATR% = 0.3%-də 27×, ATR% = 2%-də 4×.
 
 | Strategiya | ATR əmsalı | Strategiya | ATR əmsalı |
 |---|---:|---|---:|
@@ -74,6 +73,21 @@ real limit 20–75×-dir. Simulyasiya bu coin-limitlərini tətbiq etmir (onlar 
 istəsəniz `MAX_LEVERAGE` ilə ümumi həddi azaldın. 100×-də likvidasiya ~0.5% əks hərəkətdədir.
 
 Profil `app/futures.py` faylındadır (`LEVERAGE_PROFILE`).
+
+### Risk / mükafat: stop −1R, TP +1.5R
+
+Əvvəlki versiyada (leverage `0.5`, sabit 15 $ TP) bir stop ~−50% marja, bir TP ~+13% marja idi — başabaş üçün
+~80% uduş lazım idi. İndi stop və TP eyni məsafəyə bağlıdır:
+
+| ($120 marja, ATR% 0.5%, Supertrend) | Əvvəl | İndi |
+|---|---|---|
+| Leverage | 33× | 16× |
+| Stopda | −$59 (−50%) | −$29 (−24%) |
+| TP-də | +$15 (+13%) | +$43 (+36%) |
+| Başabaş uduş faizi | ~80% | ~40% (komissiya ilə ~44%) |
+
+TP qiyməti açılışda qeyd olunur: `giriş ± TP_R_MULTIPLE × |giriş − stop|`. Eyni şamda həm stop, həm TP fitili olarsa,
+ehtiyatlı olaraq stop sayılır. Köhnə hesab qaydasına qayıtmaq: `RISK_PER_MOVE=0.5`, `TP_R_MULTIPLE=0`, `TAKE_PROFIT_USDT=15`.
 
 ### Stop-loss
 
@@ -107,7 +121,7 @@ deyil, qaydanın özü sınanır — digər 20 strategiya ilə eyni şərtlərd�
 | `confluence` | „Çakır Osilatör“ AI bot sinyalları | Güven xalı 100: qiymət > MA50 > MA200, Supertrend yuxarı, ADX > 20, RSI 50–70, MACD histoqramı > 0; giriş MA60-a geri çəkilmədə. | Supertrend aşağı dönür və ya bağlanış MA60 altındadır. | Botun öz xal düsturu açıqlanmayıb — 5 şərtin hamısı = 100 qəbul edilib; leverage tavanı videodakı kimi 5×. |
 
 SHORT tərəfi digərləri kimi güzgü seriyasından gəlir (məs. 20 şamlıq maksimumun üstündə ov → SHORT).
-Leverage tavanları videolardakı kimidir: `rr_2to1` 20×, `ema_pullback` 25×, `confluence` 5×. Ümumi 15 $ TP qaydası bu altı strategiyaya da tətbiq olunur.
+Leverage tavanları videolardakı kimidir: `rr_2to1` 20×, `ema_pullback` 25×, `confluence` 5×. Ümumi stop-loss və 1.5R TP qaydası bu altı strategiyaya da tətbiq olunur.
 
 ## Dashboard
 
@@ -167,7 +181,7 @@ Backtest spot, long-only və leverage-siz olduğu üçün canlı futures nətic�
 node --check app/static/app.js
 ```
 
-Testlər futures mühasibatı (long/short, komissiya, sürüşmə, funding, likvidasiya qiyməti, stop-loss,
+Testlər futures mühasibatı (long/short, komissiya, sürüşmə, funding, likvidasiya qiyməti, stop-loss, R take-profit,
 equity = kapital + realizə + açıq PnL), 15 $ TP, çevrilmə, limitsiz paralel mövqelər, strategiya leverage-i,
 güzgü SHORT qaydası, 6 YouTube taktikasının giriş/çıxış qaydaları, restart, demo bazarda bütün strategiyalar, Binance futures cavablarının emalı, API təhlükəsizliyi
 və konfiqurasiya yoxlamalarını əhatə edir.

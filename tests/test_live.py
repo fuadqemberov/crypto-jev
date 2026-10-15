@@ -26,7 +26,7 @@ F, S = 0.0005, 0.0005
 
 
 def settings(**kw) -> Settings:
-    base = dict(capital=2000.0, margin_pct=5.0, take_profit=15.0, fee_rate=F, slippage_rate=S,
+    base = dict(capital=2000.0, margin_pct=5.0, take_profit=15.0, tp_r_multiple=0.0, fee_rate=F, slippage_rate=S,
                 maint_margin_rate=0.005, candle_delay_seconds=0)
     return Settings(**{**base, **kw})
 
@@ -115,9 +115,10 @@ def test_ledger_persists_across_restart(tmp_path):
 
 # --- strategy layer -------------------------------------------------------------------
 def test_leverage_is_chosen_by_strategy_and_volatility_from_1x_to_100x():
-    assert leverage('rsi', 0.004, 100) == 62                         # floor(0.5 / 0.008)
-    assert leverage('donchian', 0.004, 100) == 35                    # floor(0.5 / 0.014)
-    assert leverage('sma_cross', 0.04, 100) == 4                     # floor(0.5 / 0.12)
+    assert leverage('rsi', 0.004, 100) == 31                         # floor(0.25 / 0.008)
+    assert leverage('donchian', 0.004, 100) == 17                    # floor(0.25 / 0.014)
+    assert leverage('sma_cross', 0.04, 100) == 2                     # floor(0.25 / 0.12)
+    assert leverage('rsi', 0.004, 100, 0.5) == 62                    # RISK_PER_MOVE=0.5 doubles it
     assert leverage('rsi', 0.0005, 100) == 100                       # very calm coin -> capped at 100x
     assert leverage('sma_cross', 0.5, 100) == 1                      # never below 1x
     assert leverage('rsi', 0.0005, 20) == 20                         # MAX_LEVERAGE wins
@@ -192,6 +193,8 @@ class ScriptedMarket:
                           index=pd.Index(idx.astype('int64'), name='time'))
         if symbol in self.lows:
             df.iloc[-1, df.columns.get_loc('low')] = self.lows[symbol]
+        if symbol in getattr(self, 'highs', {}):
+            df.iloc[-1, df.columns.get_loc('high')] = self.highs[symbol]
         return df.tail(limit)
 
 
@@ -297,6 +300,43 @@ def test_stop_loss_on_price_poll_and_on_candle_wick_and_restart(tmp_path):
     assert trades['AUSDT']['reason'] == trades['BUSDT']['reason'] == 'stop_loss'
     assert trades['BUSDT']['exit_price'] == pytest.approx(stop_b) and trades['BUSDT']['proceeds'] > 0
     assert e.overview()['strategies'][0]['stop_losses'] == 2
+
+
+def test_r_multiple_take_profit_balances_risk_and_reward():
+    led = ledger(tp_r_multiple=1.5, stop_loss_pct=50.0)
+    for side in (1, -1):
+        pos = led.open('a', f'R{side + 1}USDT', side, 16, 100.0, T0, 1.5)          # stop 1.5 % away
+        assert pos.stop_price == pytest.approx(pos.fill_price - side * 1.5)
+        assert pos.tp_price == pytest.approx(pos.fill_price + side * 2.25)        # 1.5 R
+        loss, win = led.net_pnl(pos, pos.stop_price), led.net_pnl(pos, pos.tp_price)
+        assert loss == pytest.approx(-0.24 * pos.margin, abs=0.03 * pos.margin)   # ~ -24 % margin at 16x
+        assert win > 1.2 * -loss                                                  # 1.5R gross, ~1.27R after fees
+        assert led.is_target(pos, pos.tp_price) and not led.is_target(pos, pos.fill_price)
+    assert ledger(tp_r_multiple=0.0).tp_price(1, 100.0, 98.0) == 0.0
+
+
+def test_r_take_profit_on_price_poll_and_wick_and_defaults():
+    m = ScriptedMarket({'AUSDT': [101, 101, 101], 'BUSDT': [101, 101, 101]}, {'AUSDT': 2, 'BUSDT': 1})
+    e = Engine(settings(take_profit=0.0, tp_r_multiple=1.5), m, Store(':memory:'), [DIR])
+    tick(e, m, 0)
+    a = e.ledger.accounts['dir'].positions['AUSDT']
+    b = e.ledger.accounts['dir'].positions['BUSDT']
+    assert a.tp_price > a.fill_price > a.stop_price
+    m.live['AUSDT'] = a.tp_price * 1.0001
+    m.offset = 10 * 60_000
+    tick(e, m)
+    m.live.clear()
+    m.offset = 60_000
+    tick(e, m, 1)
+    m.closes['BUSDT'][2] = b.fill_price                                         # close back near entry...
+    tp_b = b.tp_price
+    m.highs = {'BUSDT': tp_b * 1.001}                                           # ...but the wick hit the target
+    tick(e, m, 2)
+    trades = {t['symbol']: t for t in e.store.trades('dir')}
+    assert trades['AUSDT']['reason'] == trades['BUSDT']['reason'] == 'take_profit'
+    assert trades['BUSDT']['exit_price'] == pytest.approx(tp_b) and trades['BUSDT']['pnl'] > 0
+    d = Settings()
+    assert (d.take_profit, d.tp_r_multiple, d.risk_per_move, d.stop_loss_pct) == (0.0, 1.5, 0.25, 50.0)
 
 
 def test_funding_settles_once_when_funding_time_passes():

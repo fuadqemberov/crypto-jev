@@ -11,10 +11,10 @@ Leverage (chosen by the strategy itself, per trade)
     Every strategy declares how much adverse movement it expects to sit through, in ATR(14)
     multiples. On each entry::
 
-        leverage = floor(0.5 / (ATR% × atr_mult)), clamped to [1×, MAX_LEVERAGE] (default 1×–100×)
+        leverage = floor(RISK_PER_MOVE / (ATR% × atr_mult)), clamped to [1×, MAX_LEVERAGE] (default 1×–100×)
 
-    so the strategy's typical adverse move costs at most ~50 % of the position margin, while
-    liquidation sits roughly twice as far away. Calm coins get more leverage, wild ones less;
+    so the strategy's typical adverse move (= its stop distance) costs ~RISK_PER_MOVE (default 25 %)
+    of the position margin, while liquidation sits roughly four times as far away. Calm coins get more leverage, wild ones less;
     tight mean-reversion rules accept more leverage than wide trend/breakout rules.
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ from backtest import indicators as ind
 from backtest.strategies import Strategy
 
 log = logging.getLogger('app.futures')
-RISK_PER_TYPICAL_MOVE = 0.5
+RISK_PER_TYPICAL_MOVE = 0.25   # default of RISK_PER_MOVE
 
 # key -> (expected adverse move in ATR multiples, leverage ceiling)
 LEVERAGE_PROFILE: dict[str, tuple[float, int]] = {
@@ -67,12 +67,12 @@ def direction(strategy: Strategy, df: pd.DataFrame, mirrored: pd.DataFrame | Non
     return long_.astype(int) - short.astype(int)
 
 
-def leverage(key: str, atr_pct: float, cap: int) -> int:
+def leverage(key: str, atr_pct: float, cap: int, risk: float = RISK_PER_TYPICAL_MOVE) -> int:
     mult, own_max = LEVERAGE_PROFILE.get(key, DEFAULT_PROFILE)
     ceiling = max(1, min(own_max, cap))
     if not math.isfinite(atr_pct) or atr_pct <= 0:
         return 1
-    return int(min(ceiling, max(1, math.floor(RISK_PER_TYPICAL_MOVE / (atr_pct * mult)))))
+    return int(min(ceiling, max(1, math.floor(risk / (atr_pct * mult)))))
 
 
 def stop_distance(key: str, atr_pct: float, price: float) -> float | None:
@@ -83,9 +83,9 @@ def stop_distance(key: str, atr_pct: float, price: float) -> float | None:
     return mult * atr_pct * price
 
 
-def leverage_rule(key: str, cap: int) -> str:
+def leverage_rule(key: str, cap: int, risk: float = RISK_PER_TYPICAL_MOVE) -> str:
     mult, own_max = LEVERAGE_PROFILE.get(key, DEFAULT_PROFILE)
-    return f'Leverage: ⌊0.5 / (ATR% × {mult:g})⌋, 1× – {min(own_max, cap)}×.'
+    return f'Leverage: ⌊{risk:g} / (ATR% × {mult:g})⌋, 1× – {min(own_max, cap)}×.'
 
 
 def evaluate(strategies: list[Strategy], data: dict[str, pd.DataFrame]) -> dict[str, dict[str, Signal]]:

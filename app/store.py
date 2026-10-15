@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS positions (
     key TEXT NOT NULL, symbol TEXT NOT NULL, side INTEGER NOT NULL, leverage INTEGER NOT NULL,
     qty REAL NOT NULL, entry_price REAL NOT NULL, fill_price REAL NOT NULL, margin REAL NOT NULL,
     fee REAL NOT NULL, funding REAL NOT NULL, opened_at INTEGER NOT NULL, stop_price REAL NOT NULL DEFAULT 0,
+    tp_price REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (key, symbol));
 CREATE TABLE IF NOT EXISTS trades (
     id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, symbol TEXT NOT NULL, side INTEGER NOT NULL,
@@ -27,7 +28,7 @@ CREATE TABLE IF NOT EXISTS equity (
 """
 
 POSITION_COLUMNS = ('symbol', 'side', 'leverage', 'qty', 'entry_price', 'fill_price', 'margin', 'fee', 'funding', 'opened_at',
-                    'stop_price')
+                    'stop_price', 'tp_price')
 TRADE_COLUMNS = ('symbol', 'side', 'leverage', 'qty', 'entry_price', 'exit_price', 'margin', 'notional', 'proceeds',
                  'pnl', 'ret', 'fees', 'funding', 'opened_at', 'closed_at', 'reason')
 
@@ -43,8 +44,9 @@ class Store:
         self.db.execute('PRAGMA synchronous=NORMAL')
         self.db.executescript(SCHEMA)
         cols = {r['name'] for r in self.db.execute('PRAGMA table_info(positions)')}
-        if 'stop_price' not in cols:                      # databases created before the stop-loss
-            self.db.execute('ALTER TABLE positions ADD COLUMN stop_price REAL NOT NULL DEFAULT 0')
+        for col in ('stop_price', 'tp_price'):            # databases created before stop-loss / R take-profit
+            if col not in cols:
+                self.db.execute(f'ALTER TABLE positions ADD COLUMN {col} REAL NOT NULL DEFAULT 0')
         self.db.commit()
 
     def close(self) -> None:
