@@ -513,3 +513,52 @@ def test_binance_futures_parsing_and_rate_limit(monkeypatch):
     assert uni == [('ETHUSDT', 9.0), ('BTCUSDT', 5.0)]          # stablecoin, quarterly, commodity, halted removed
     assert quotes == {'BTCUSDT': Quote(100.5, 0.0001, T0 + 8 * H)}
     assert list(k.index) == [T0 - H]                            # forming candle dropped
+
+
+# --- pause new entries ----------------------------------------------------------------
+def test_pause_blocks_new_entries_but_open_positions_still_exit(tmp_path):
+    m = ScriptedMarket({'AUSDT': [101, 101, 101, 101], 'BUSDT': [96, 96, 101, 101]}, {'AUSDT': 2, 'BUSDT': 1})
+    e = Engine(settings(take_profit=0.0), m, Store(tmp_path / 'p.db'), [DIR])
+    tick(e, m, 0)
+    a = e.ledger.accounts['dir'].positions['AUSDT']               # opened before the pause
+    assert 'BUSDT' not in e.ledger.accounts['dir'].positions
+    res = e.set_entries_paused(True)
+    assert res['entries_paused'] and res['open_positions'] == 1
+    tick(e, m, 1)
+    tick(e, m, 2)                                                  # fresh BUSDT long signal -> not opened
+    assert 'BUSDT' not in e.ledger.accounts['dir'].positions
+    assert e.detail('dir')['signals']['paused'] == [{'symbol': 'BUSDT', 'side': 'LONG'}]
+    assert e.status()['entries_paused'] is True
+    m.live['AUSDT'] = a.stop_price - 1e-6                          # the open one still hits its stop
+    m.offset = 10 * 60_000
+    tick(e, m)
+    assert 'AUSDT' not in e.ledger.accounts['dir'].positions
+    assert e.store.trades('dir')[0]['reason'] == 'stop_loss'
+    e2 = Engine(settings(take_profit=0.0), m, Store(tmp_path / 'p.db'), [DIR])
+    assert e2.entries_paused and e2.paused_at                      # survives a restart
+    e2.set_entries_paused(False)
+    assert not Engine(settings(take_profit=0.0), m, Store(tmp_path / 'p.db'), [DIR]).entries_paused
+
+
+def test_pause_endpoint_toggles_and_rejects_foreign_or_bare_requests(tmp_path):
+    client, clock = make_client(tmp_path)
+    ok = {'X-Dashboard': '1', 'Origin': 'http://testserver'}
+    with client:
+        assert client.get('/api/overview').json()['status']['entries_paused'] is False
+        r = client.post('/api/control/entries', json={'paused': True}, headers=ok)
+        assert r.status_code == 200 and r.json()['entries_paused'] is True
+        assert client.get('/api/overview').json()['status']['entries_paused'] is True
+        assert client.post('/api/control/entries', json={'paused': True}).status_code == 403          # no header
+        assert client.post('/api/control/entries', json={'paused': False},
+                           headers={'X-Dashboard': '1', 'Origin': 'https://evil.example'}).status_code == 403
+        assert client.post('/api/control/entries', json={'paused': 'no'}, headers=ok).status_code == 422
+        assert client.post('/api/overview', headers=ok).status_code == 405                        # still read-only
+        assert client.post('/api/control/entries', json={'paused': False}, headers=ok).json()['entries_paused'] is False
+
+
+def test_pause_endpoint_requires_basic_auth_when_configured(tmp_path):
+    client, _ = make_client(tmp_path, user='u', password='p')
+    with client:
+        h = {'X-Dashboard': '1'}
+        assert client.post('/api/control/entries', json={'paused': True}, headers=h).status_code == 401
+        assert client.post('/api/control/entries', json={'paused': True}, headers=h, auth=('u', 'p')).status_code == 200

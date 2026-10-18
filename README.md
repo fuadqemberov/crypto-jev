@@ -132,9 +132,15 @@ Leverage tavanları videolardakı kimidir: `rr_2to1` 20×, `ema_pullback` 25×, 
   Hər bölmədə: LONG/SHORT/leverage qaydası, KPI-lar, balans qrafiki, son şamın siqnalları, açıq mövqelər
   (istiqamət, leverage, mark, likvidasiya qiyməti, marja, funding, xalis PnL, TP-yə qalan məbləğ) və tarixçə
   (bağlanma səbəbi: TP / Siqnal / Çevrilmə / Likvidasiya).
-- Dashboard yalnız oxuyur — HTTP ilə hesablara heç nə yazmaq mümkün deyil.
+- **⏸ Yeni siqnalları dayandır** (yuxarı paneldə) — basanda heç bir strategiya yeni mövqe açmır; açıq mövqelər
+  stop / TP / siqnalla bağlanana qədər normal davam edir. Siqnallar hesablanır və strategiya bölməsində
+  „dayandırıldığı üçün açılmadı“ kimi göstərilir. Vəziyyət bazada saxlanır (restart-dan sonra da qalır).
+  Yenidən basanda (**▶ Yeni siqnallara icazə ver**) növbəti təzə siqnaldan girişlər bərpa olunur.
+- Dashboard bundan başqa yalnız oxuyur — balans, mövqe və əməliyyatları HTTP ilə dəyişmək mümkün deyil.
+  Düymə `POST /api/control/entries` istifadə edir; başqa saytlardan basılmasın deyə Origin və xüsusi başlıq yoxlanır.
+  Dashboard internetə açıqdırsa `DASHBOARD_USER`/`DASHBOARD_PASSWORD` mütləq qoyun — düymə də parol tələb edəcək.
 
-API: `GET /api/overview`, `GET /api/curves`, `GET /api/strategy/{key}`, `GET /health`.
+API: `GET /api/overview`, `GET /api/curves`, `GET /api/strategy/{key}`, `GET /health`, `POST /api/control/entries` (`{"paused": true|false}`).
 
 ## Məlumat, restart və sıfırlama
 

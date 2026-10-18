@@ -23,6 +23,11 @@ h2 { font-size: 14px; margin: 0; font-weight: 600; }
 .mode.demo { background: #f0b90b18; color: var(--accent); }
 .status { display: flex; flex-wrap: wrap; gap: 6px 20px; margin-left: auto; font-size: 12px; color: var(--muted); }
 .status b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+.pause-btn { padding: 6px 12px; border-radius: 6px; border: 1px solid #f0b90b66; background: #f0b90b14; color: var(--accent); cursor: pointer; font-size: 13px; font-weight: 600; }
+.pause-btn:hover { background: #f0b90b26; }
+.pause-btn.paused { border-color: #0ecb8166; background: #0ecb8114; color: var(--green); }
+.pause-btn:disabled { opacity: .55; cursor: wait; }
+#paused-banner:not(:empty) { padding: 8px 20px; background: #f0b90b14; color: var(--accent); border-bottom: 1px solid #5c4a14; font-weight: 500; }
 #notice:not(:empty) { padding: 8px 20px; background: #f6465d14; color: #ff8f9d; border-bottom: 1px solid #5c2630; }
 
 /* layout */

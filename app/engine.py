@@ -14,6 +14,9 @@ candles are loaded and each strategy decides a direction (long / short / flat, s
            only the free margin of the wallet. One position per coin per strategy.
 
 Orders are filled at the current mark price with fee + slippage. No real orders exist.
+
+Pause: ``set_entries_paused(True)`` (dashboard button "Yeni siqnalları dayandır") stops new entries for
+every strategy. Open positions keep running to their stop / take-profit / signal exit. Persisted.
 """
 from __future__ import annotations
 
@@ -59,6 +62,9 @@ class Engine:
         self.universe: list[tuple[str, float]] = store.get_meta('universe', [])
         self.benchmark: dict | None = store.get_meta('benchmark')
         self.events: deque[dict] = deque(store.get_meta('events', []), maxlen=300)
+        pause = store.get_meta('entries_paused') or {}
+        self.entries_paused: bool = bool(pause.get('paused'))
+        self.paused_at: int | None = pause.get('at')
         self.prices: dict[str, float] = {}
         self.funding: dict[str, tuple[int, float]] = {}      # symbol -> (next settlement ms, rate)
         self.last_price_at: int | None = None
@@ -190,7 +196,7 @@ class Engine:
         for s in self.strategies:
             st: dict[str, Signal] = states[s.key]
             acc = self.ledger.accounts[s.key]
-            exits, entries, skipped = [], [], []
+            exits, entries, skipped, paused = [], [], [], []
             for symbol, pos in list(acc.positions.items()):
                 sig = st.get(symbol)
                 if sig and sig.cur != pos.side:
@@ -201,6 +207,9 @@ class Engine:
                 sig = st.get(symbol)
                 if not sig or sig.cur == 0 or sig.prev == sig.cur or symbol in acc.positions:
                     continue
+                if self.entries_paused:                   # new entries stopped; open positions keep running
+                    paused.append({'symbol': symbol, 'side': SIDE[sig.cur]})
+                    continue
                 lev = leverage(s.key, sig.atr_pct, self.settings.max_leverage, self.settings.risk_per_move)
                 px = self._price(symbol, data)
                 pos = self.ledger.open(s.key, symbol, sig.cur, lev, px, ts, stop_distance(s.key, sig.atr_pct, px))
@@ -210,7 +219,7 @@ class Engine:
                 else:
                     skipped.append({'symbol': symbol, 'side': SIDE[sig.cur], 'leverage': lev})
             new_signals[s.key] = {
-                'candle': closed, 'entries': entries, 'exits': exits, 'skipped': skipped,
+                'candle': closed, 'entries': entries, 'exits': exits, 'skipped': skipped, 'paused': paused,
                 'long': [sym for sym in ranked if sym in st and st[sym].cur == 1],
                 'short': [sym for sym in ranked if sym in st and st[sym].cur == -1],
                 'evaluated': sum(1 for sym in st if sym in in_universe)}
@@ -222,6 +231,15 @@ class Engine:
         self.store.set_meta('events', list(self.events))
         self.store.set_meta('last_candle', closed)
         log.info('Şam %s işləndi: %d coin, %.1f s', closed, len(data), self.candle_seconds)
+
+    def set_entries_paused(self, paused: bool) -> dict:
+        if bool(paused) != self.entries_paused:
+            self.entries_paused = bool(paused)
+            self.paused_at = self.market.now_ms() if paused else None
+            self.store.set_meta('entries_paused', {'paused': self.entries_paused, 'at': self.paused_at})
+            log.info('Yeni girişlər %s', 'DAYANDIRILDI' if paused else 'yenidən AÇILDI')
+        return {'entries_paused': self.entries_paused, 'paused_at': self.paused_at,
+                'open_positions': sum(len(a.positions) for a in self.ledger.accounts.values())}
 
     def _candle_liquidations(self, data: dict[str, pd.DataFrame], closed: int, ts: int) -> None:
         """Wicks between two price polls: for a position held through the whole candle, a low (long) /
@@ -308,6 +326,8 @@ class Engine:
             'max_leverage': self.settings.max_leverage,
             'fee_pct': self.settings.fee_rate * 100, 'slippage_pct': self.settings.slippage_rate * 100,
             'candle_seconds': self.candle_seconds, 'error': self.last_error,
+            'entries_paused': self.entries_paused, 'paused_at': self.paused_at,
+            'open_positions': sum(len(a.positions) for a in self.ledger.accounts.values()),
         }
 
     def overview(self) -> dict:
@@ -352,7 +372,7 @@ class Engine:
                                             'yəni bazarın tam əksi üçün alış siqnalı SHORT açır.',
             'leverage_rule': leverage_rule(key, self.settings.max_leverage, self.settings.risk_per_move),
             'positions': positions, 'trades': trades,
-            'signals': self.signals.get(key, {'entries': [], 'exits': [], 'skipped': [], 'long': [], 'short': []}),
+            'signals': self.signals.get(key, {'entries': [], 'exits': [], 'skipped': [], 'paused': [], 'long': [], 'short': []}),
             'equity': downsample(self.store.equity(key)), 'benchmark': downsample(self.store.equity(BENCHMARK)),
             'benchmark_symbol': self.benchmark['symbol'] if self.benchmark else None,
         }

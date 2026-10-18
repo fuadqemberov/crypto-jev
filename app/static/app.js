@@ -1,5 +1,5 @@
 'use strict';
-/* 26 strategy virtual trading dashboard. Read-only: it only GETs /api/* and never changes accounts. */
+/* 26 strategy virtual trading dashboard. Reads /api/*; the only write is the pause switch for NEW entries. */
 
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 10000;
@@ -66,7 +66,7 @@ function renderStatus(st) {
   mode.textContent = st.mode === 'demo' ? 'DEMO · SİNTETİK FUTURES' : 'USDT-M FUTURES · VİRTUAL HESAB';
   mode.className = 'mode' + (st.mode === 'demo' ? ' demo' : '');
   $('st-tf').textContent = st.timeframe;
-  $('st-rules').textContent = `TP ${st.tp_r_multiple > 0 ? st.tp_r_multiple + 'R' : ''}${st.take_profit > 0 ? (st.tp_r_multiple > 0 ? ' / ' : '') + '$' + st.take_profit : ''}${!(st.tp_r_multiple > 0) && !(st.take_profit > 0) ? 'yox' : ''} · stop ${st.stop_loss_pct > 0 ? '≤' + st.stop_loss_pct + '% marja' : 'yox'} · marja ${st.margin_pct}% · maks ${st.max_leverage}×`;
+  $('st-rules').textContent = `${st.tp_r_multiple > 0 ? st.tp_r_multiple + 'R' : ''}${st.take_profit > 0 ? (st.tp_r_multiple > 0 ? ' / ' : '') + '$' + st.take_profit : ''}${!(st.tp_r_multiple > 0) && !(st.take_profit > 0) ? 'yox' : ''} · stop ${st.stop_loss_pct > 0 ? '≤' + st.stop_loss_pct + '% marja' : 'yox'} · marja ${st.margin_pct}% · maks ${st.max_leverage}×`;
   $('st-universe').textContent = st.universe ? `${st.universe}${st.symbols === 'ALL' ? ' (top ' + st.top_n + ')' : ''}` : '—';
   $('st-candle').textContent = when(st.last_candle);
   const age = st.last_price_at ? Math.round((Date.now() - st.last_price_at) / 1000) : null;
@@ -74,7 +74,40 @@ function renderStatus(st) {
   $('notice').textContent = st.error ? `Bazar məlumatı xətası: ${st.error.message} — növbəti dövrdə yenidən cəhd edilir.` :
     (!st.last_candle ? 'İlk bağlanmış şam gözlənilir / yüklənir… Hər hesab 2000 $ ilə başlayır; LONG/SHORT mövqelər yalnız təzə siqnal gələndə açılır.' : '');
   state.status = st;
+  renderPause(st);
   tickClock();
+}
+function renderPause(st) {
+  const btn = $('pause-btn');
+  btn.hidden = false;
+  btn.classList.toggle('paused', !!st.entries_paused);
+  btn.textContent = st.entries_paused ? '▶ Yeni siqnallara icazə ver' : '⏸ Yeni siqnalları dayandır';
+  btn.title = st.entries_paused ? 'Strategiyalar yenidən yeni mövqe aça bilər' : 'Açıq mövqelər stop / TP / siqnalla bağlanana qədər davam edir, yeni mövqe açılmır';
+  $('paused-banner').textContent = st.entries_paused
+    ? `⏸ Yeni siqnallar dayandırılıb (${when(st.paused_at)}) — yeni mövqe açılmır. ${st.open_positions} açıq mövqe stop / TP / siqnalla bağlanana qədər davam edir.`
+    : '';
+}
+async function togglePause() {
+  const st = state.status;
+  if (!st) return;
+  const btn = $('pause-btn');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/control/entries', {
+      method: 'POST', cache: 'no-store', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Dashboard': '1' },
+      body: JSON.stringify({ paused: !st.entries_paused }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const res = await r.json();
+    renderPause({ ...st, ...res });
+    state.status = { ...st, ...res };
+    refresh(true);
+  } catch (err) {
+    $('notice').textContent = 'Düymə işləmədi: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
 }
 function tickClock() {
   const st = state.status;
@@ -245,6 +278,7 @@ function renderDetail(d) {
     <h3>Açıldı (yeni siqnal)</h3>${orders(sig.entries)}
     <h3>Siqnalla bağlandı / çevrildi</h3>${orders(sig.exits)}
     <h3>Sərbəst marja çatmadığı üçün buraxıldı</h3>${orders(sig.skipped, 'skip')}
+    ${(sig.paused || []).length ? `<h3>Yeni siqnallar dayandırıldığı üçün açılmadı (${sig.paused.length})</h3>${orders(sig.paused, 'skip')}` : ''}
     <h3>LONG rejimində (${(sig.long || []).length}${sig.evaluated ? ' / ' + sig.evaluated : ''}) — sarı çərçivə: hesabda var</h3>${active(sig.long, 'LONG')}
     <h3>SHORT rejimində (${(sig.short || []).length})</h3>${active(sig.short, 'SHORT')}`;
 
@@ -300,6 +334,7 @@ async function refresh(force = false) {
 
 document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('hashchange', route);
+  $('pause-btn').addEventListener('click', togglePause);
   $('prev').addEventListener('click', () => step(-1));
   $('next').addEventListener('click', () => step(1));
   $('nav-select').addEventListener('change', (e) => { location.hash = e.target.value ? '#/s/' + e.target.value : '#/'; });
