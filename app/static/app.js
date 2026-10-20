@@ -26,7 +26,7 @@ function duration(ms) {
   const h = ms / 3600000;
   return h >= 48 ? (h / 24).toFixed(1) + ' gün' : h >= 1 ? h.toFixed(1) + ' saat' : Math.round(ms / 60000) + ' dəq';
 }
-const REASONS = { take_profit: ['TP', 'tp'], signal: ['Siqnal', ''], reverse: ['Çevrilmə', ''], liquidation: ['Likvidasiya', 'liq'], stop_loss: ['Stop', 'sl'] };
+const REASONS = { take_profit: ['TP', 'tp'], signal: ['Siqnal', ''], reverse: ['Çevrilmə', ''], liquidation: ['Likvidasiya', 'liq'], stop_loss: ['Stop', 'sl'], timeout: ['Vaxt', ''] };
 const reasonTag = (r) => { const [t, c] = REASONS[r] || [r, '']; return `<span class="reason ${c}">${esc(t)}</span>`; };
 const sideTag = (side, suffix = '') => `<span class="side ${side === 'LONG' ? 'buy' : 'sell'}">${esc(side)}${suffix}</span>`;
 const color = (i, n = 26) => `hsl(${Math.round(i * 360 / n)}, 72%, 60%)`;
@@ -241,7 +241,10 @@ function renderDetail(d) {
   $('s-rules').textContent = 'LONG: ' + d.rules;
   $('s-short').textContent = d.short_rule;
   $('s-lev').textContent = d.leverage_rule + ` Marja: balansın ${d.status.margin_pct}%-i; TP: ${d.status.tp_r_multiple > 0 ? 'stop məsafəsinin ' + d.status.tp_r_multiple + ' qatı (' + d.status.tp_r_multiple + 'R)' : 'R-TP yox'}${d.status.take_profit > 0 ? ' və ya xalis $' + d.status.take_profit : ''}.` +
-    (d.status.stop_loss_pct > 0 ? ` Stop-loss: giriş ∓ ATR əmsalı × ATR(14), zərər marjanın ən çox ${d.status.stop_loss_pct}%-i.` : ' Stop-loss söndürülüb.');
+    (d.status.stop_loss_pct > 0 ? ` Stop-loss: giriş ∓ ATR əmsalı × ATR(14), zərər marjanın ən çox ${d.status.stop_loss_pct}%-i.` : ' Stop-loss söndürülüb.') +
+    (d.summary.signal_exit ? ' Çıxış: stop / TP və əks siqnal.' : ` Çıxış: yalnız stop / TP${d.status.max_hold_hours > 0 ? ' / ' + d.status.max_hold_hours + ' saat' : ''} (əks siqnal mövqeni bağlamır).`) +
+    (d.status.max_cost_r > 0 ? ` Komissiya riskin ${Math.round(d.status.max_cost_r * 100)}%-indən çoxdursa giriş edilmir.` : '') +
+    (d.status.cooldown_bars > 0 ? ` Bağlanışdan sonra ${d.status.cooldown_bars} şam gözləmə.` : '');
   document.title = `${s.name} — 26 Strategiya`;
   const kpis = [
     ['Balans', money(s.equity), `<span class="${cls(s.return_pct)}">${pct(s.return_pct)}</span> (başlanğıc ${money(s.capital)})`],
@@ -279,6 +282,7 @@ function renderDetail(d) {
     <h3>Siqnalla bağlandı / çevrildi</h3>${orders(sig.exits)}
     <h3>Sərbəst marja çatmadığı üçün buraxıldı</h3>${orders(sig.skipped, 'skip')}
     ${(sig.paused || []).length ? `<h3>Yeni siqnallar dayandırıldığı üçün açılmadı (${sig.paused.length})</h3>${orders(sig.paused, 'skip')}` : ''}
+    ${(sig.filtered || []).length ? `<h3>Filtr: komissiya riskə görə çox və ya gözləmə müddəti (${sig.filtered.length})</h3>${orders(sig.filtered.map((x) => ({ ...x, symbol: x.symbol + (x.why === 'fee' ? ' · komissiya ' + Math.round(x.cost_r * 100) + '%R' : ' · gözləmə') })), 'skip')}` : ''}
     <h3>LONG rejimində (${(sig.long || []).length}${sig.evaluated ? ' / ' + sig.evaluated : ''}) — sarı çərçivə: hesabda var</h3>${active(sig.long, 'LONG')}
     <h3>SHORT rejimində (${(sig.short || []).length})</h3>${active(sig.short, 'SHORT')}`;
 

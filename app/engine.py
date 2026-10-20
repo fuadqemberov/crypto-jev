@@ -8,9 +8,11 @@ liquidated, positions crossing their stop-loss are closed and positions whose ne
 When a new candle closes the universe (top-N USDT perpetuals by 24h volume) is refreshed, closed
 candles are loaded and each strategy decides a direction (long / short / flat, see app/futures.py):
 
-* close  – the held direction is no longer the strategy's direction on the closed bar;
+* close  – the held direction is no longer the strategy's direction on the closed bar (only for rules
+           that exit on their own signal, see SIGNAL_EXITS; the others end at stop / TP / MAX_HOLD_HOURS);
 * open   – the direction changed on the closed bar (fresh signal); leverage is chosen by the
-           strategy, margin = ORDER_MARGIN_PCT of equity. No limit on parallel positions —
+           strategy, margin = ORDER_MARGIN_PCT of equity. Skipped when fees would exceed MAX_COST_R of
+           the stop distance, or within COOLDOWN_BARS candles of this strategy's last close on the coin. No limit on parallel positions —
            only the free margin of the wallet. One position per coin per strategy.
 
 Orders are filled at the current mark price with fee + slippage. No real orders exist.
@@ -31,7 +33,7 @@ import pandas as pd
 from backtest.strategies import STRATEGIES, Strategy
 
 from .config import Settings
-from .futures import Signal, evaluate, leverage, leverage_rule, stop_distance
+from .futures import Signal, cost_r, evaluate, exits_on_signal, leverage, leverage_rule, stop_distance
 from .ledger import Ledger, Position
 from .store import Store
 
@@ -65,6 +67,7 @@ class Engine:
         pause = store.get_meta('entries_paused') or {}
         self.entries_paused: bool = bool(pause.get('paused'))
         self.paused_at: int | None = pause.get('at')
+        self.last_close: dict[tuple[str, str], int] = store.last_closes()   # cooldown bookkeeping
         self.prices: dict[str, float] = {}
         self.funding: dict[str, tuple[int, float]] = {}      # symbol -> (next settlement ms, rate)
         self.last_price_at: int | None = None
@@ -116,6 +119,7 @@ class Engine:
 
     def _risk_checks(self, now: int) -> None:
         tp = self.settings.take_profit
+        hold_ms = int(self.settings.max_hold_hours * 3_600_000)
         for s in self.strategies:
             acc = self.ledger.accounts[s.key]
             for symbol, pos in list(acc.positions.items()):
@@ -128,6 +132,8 @@ class Engine:
                     self._close(s, pos, price, now, 'stop_loss')          # stop-market: filled at the current mark
                 elif self.ledger.is_target(pos, price):
                     self._close(s, pos, price, now, 'take_profit')        # R-multiple target reached
+                elif hold_ms and now - pos.opened_at >= hold_ms:
+                    self._close(s, pos, price, now, 'timeout')            # held too long without stop / TP
                 elif tp > 0 and self.ledger.net_pnl(pos, price) >= tp:
                     self._close(s, pos, price, now, 'take_profit')
 
@@ -196,10 +202,11 @@ class Engine:
         for s in self.strategies:
             st: dict[str, Signal] = states[s.key]
             acc = self.ledger.accounts[s.key]
-            exits, entries, skipped, paused = [], [], [], []
+            exits, entries, skipped, paused, filtered = [], [], [], [], []
+            signal_exit = exits_on_signal(s.key, self.settings.signal_exits)
             for symbol, pos in list(acc.positions.items()):
                 sig = st.get(symbol)
-                if sig and sig.cur != pos.side:
+                if sig and sig.cur != pos.side and signal_exit:
                     trade = self._close(s, pos, self._price(symbol, data), ts, 'reverse' if sig.cur == -pos.side else 'signal')
                     if trade:
                         exits.append({'symbol': symbol, 'side': SIDE[pos.side], 'pnl': trade['pnl']})
@@ -210,6 +217,14 @@ class Engine:
                 if self.entries_paused:                   # new entries stopped; open positions keep running
                     paused.append({'symbol': symbol, 'side': SIDE[sig.cur]})
                     continue
+                last = self.last_close.get((s.key, symbol))
+                if self.settings.cooldown_bars and last is not None and ts - last < self.settings.cooldown_bars * self.interval:
+                    filtered.append({'symbol': symbol, 'side': SIDE[sig.cur], 'why': 'cooldown'})
+                    continue
+                cr = cost_r(s.key, sig.atr_pct, self.settings.fee_rate + self.settings.slippage_rate)
+                if self.settings.max_cost_r > 0 and cr > self.settings.max_cost_r:
+                    filtered.append({'symbol': symbol, 'side': SIDE[sig.cur], 'why': 'fee', 'cost_r': round(cr, 3)})
+                    continue
                 lev = leverage(s.key, sig.atr_pct, self.settings.max_leverage, self.settings.risk_per_move)
                 px = self._price(symbol, data)
                 pos = self.ledger.open(s.key, symbol, sig.cur, lev, px, ts, stop_distance(s.key, sig.atr_pct, px))
@@ -219,7 +234,7 @@ class Engine:
                 else:
                     skipped.append({'symbol': symbol, 'side': SIDE[sig.cur], 'leverage': lev})
             new_signals[s.key] = {
-                'candle': closed, 'entries': entries, 'exits': exits, 'skipped': skipped, 'paused': paused,
+                'candle': closed, 'entries': entries, 'exits': exits, 'skipped': skipped, 'paused': paused, 'filtered': filtered,
                 'long': [sym for sym in ranked if sym in st and st[sym].cur == 1],
                 'short': [sym for sym in ranked if sym in st and st[sym].cur == -1],
                 'evaluated': sum(1 for sym in st if sym in in_universe)}
@@ -262,6 +277,7 @@ class Engine:
     def _close(self, s: Strategy, pos: Position, price: float, ts: int, reason: str) -> dict | None:
         trade = self.ledger.close(s.key, pos.symbol, price, ts, reason)
         if trade:
+            self.last_close[(s.key, pos.symbol)] = ts
             self._event(ts, s, 'CLOSE', pos, price, trade)
         return trade
 
@@ -304,7 +320,8 @@ class Engine:
             'avg_hold_hours': float(st['avg_hold']) / 3_600_000 if n else None,
             'avg_leverage': float(st['avg_lev']) if n else None,
             'take_profits': int(st.get('tp') or 0), 'liquidations': int(st.get('liq') or 0),
-            'stop_losses': int(st.get('sl') or 0),
+            'stop_losses': int(st.get('sl') or 0), 'timeouts': int(st.get('tmo') or 0),
+            'signal_exit': exits_on_signal(key, self.settings.signal_exits),
             'long_trades': int(st.get('longs') or 0), 'short_trades': int(st.get('shorts') or 0),
             'max_dd_pct': acc.max_dd * 100, 'open_positions': len(positions),
             'open_long': sum(1 for p in positions if p.side > 0), 'open_short': sum(1 for p in positions if p.side < 0),
@@ -322,7 +339,9 @@ class Engine:
             'top_n': self.settings.top_n, 'capital': self.settings.capital,
             'margin_pct': self.settings.margin_pct, 'take_profit': self.settings.take_profit,
             'stop_loss_pct': self.settings.stop_loss_pct, 'tp_r_multiple': self.settings.tp_r_multiple,
-            'risk_per_move': self.settings.risk_per_move,
+            'risk_per_move': self.settings.risk_per_move, 'max_cost_r': self.settings.max_cost_r,
+            'signal_exits': self.settings.signal_exits, 'cooldown_bars': self.settings.cooldown_bars,
+            'max_hold_hours': self.settings.max_hold_hours,
             'max_leverage': self.settings.max_leverage,
             'fee_pct': self.settings.fee_rate * 100, 'slippage_pct': self.settings.slippage_rate * 100,
             'candle_seconds': self.candle_seconds, 'error': self.last_error,
@@ -372,7 +391,7 @@ class Engine:
                                             'yəni bazarın tam əksi üçün alış siqnalı SHORT açır.',
             'leverage_rule': leverage_rule(key, self.settings.max_leverage, self.settings.risk_per_move),
             'positions': positions, 'trades': trades,
-            'signals': self.signals.get(key, {'entries': [], 'exits': [], 'skipped': [], 'paused': [], 'long': [], 'short': []}),
+            'signals': self.signals.get(key, {'entries': [], 'exits': [], 'skipped': [], 'paused': [], 'filtered': [], 'long': [], 'short': []}),
             'equity': downsample(self.store.equity(key)), 'benchmark': downsample(self.store.equity(BENCHMARK)),
             'benchmark_symbol': self.benchmark['symbol'] if self.benchmark else None,
         }

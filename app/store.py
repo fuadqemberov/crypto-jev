@@ -106,10 +106,14 @@ class Store:
                    SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END) gross_win,
                    -SUM(CASE WHEN pnl < 0 THEN pnl ELSE 0 END) gross_loss,
                    AVG(ret) avg_ret, MAX(ret) best, MIN(ret) worst, AVG(closed_at - opened_at) avg_hold,
-                   SUM(reason = 'take_profit') tp, SUM(reason = 'liquidation') liq, SUM(reason = 'stop_loss') sl,
+                   SUM(reason = 'take_profit') tp, SUM(reason = 'liquidation') liq, SUM(reason = 'stop_loss') sl, SUM(reason = 'timeout') tmo,
                    SUM(side = 1) longs, SUM(side = -1) shorts, AVG(leverage) avg_lev
             FROM trades GROUP BY key""")
         return {r['key']: dict(r) for r in rows}
+
+    def last_closes(self) -> dict[tuple[str, str], int]:
+        rows = self.db.execute('SELECT key, symbol, MAX(closed_at) t FROM trades GROUP BY key, symbol')
+        return {(r['key'], r['symbol']): int(r['t']) for r in rows}
 
     def add_equity(self, ts: int, values: dict[str, float]) -> None:
         with self.db:

@@ -47,6 +47,25 @@ LEVERAGE_PROFILE: dict[str, tuple[float, int]] = {
 }
 DEFAULT_PROFILE = (3.0, 100)
 
+# SIGNAL_EXITS=auto (experimental, off by default): rules whose exit signal IS their profit target / own
+# stop keep closing on it — mean-reversion and rules with a built-in stop / target / trail; trend, momentum
+# and breakout cross-overs then end only at stop / TP / max hold. Their signal exits lost money live
+# (15–18 Oct 2026), but in demo runs replacing them with full stops was worse overall, hence 'all' default.
+OWN_EXIT_RULES = frozenset({'rsi', 'bb_revert', 'stoch', 'williams', 'cci', 'mfi',
+                            'atr_trail', 'liq_sweep', 'rr_2to1', 'ema_pullback', 'range_scalp'})
+
+
+def exits_on_signal(key: str, mode: str) -> bool:
+    return mode == 'all' or (mode == 'auto' and key in OWN_EXIT_RULES)
+
+
+def cost_r(key: str, atr_pct: float, cost_rate: float) -> float:
+    """Round-trip fee + slippage as a share of the stop distance (1R). inf when ATR is unknown."""
+    mult, _ = LEVERAGE_PROFILE.get(key, DEFAULT_PROFILE)
+    if not math.isfinite(atr_pct) or atr_pct <= 0:
+        return math.inf
+    return 2 * cost_rate / (mult * atr_pct)
+
 
 @dataclass(frozen=True)
 class Signal:

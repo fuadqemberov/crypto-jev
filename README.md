@@ -89,6 +89,22 @@ Profil `app/futures.py` faylındadır (`LEVERAGE_PROFILE`).
 TP qiyməti açılışda qeyd olunur: `giriş ± TP_R_MULTIPLE × |giriş − stop|`. Eyni şamda həm stop, həm TP fitili olarsa,
 ehtiyatlı olaraq stop sayılır. Köhnə hesab qaydasına qayıtmaq: `RISK_PER_MOVE=0.5`, `TP_R_MULTIPLE=0`, `TAKE_PROFIT_USDT=15`.
 
+### Komissiya filtri (`MAX_COST_R`, default 0.10)
+
+Gediş-dönüş komissiya + sürüşmə (`2 × (FEE_RATE + SLIPPAGE_RATE)` = 0.2%) stop məsafəsinin 10%-indən çoxdursa,
+giriş edilmir. Çox sakit coin-lərdə (BTC, BNB, ETH) stop çox yaxın olur, leverage yüksək olur və komissiya riskin
+20–25%-ni yeyir. 15–18 oktyabr canlı nəticələrində 13×+ leverage-li 331 əməliyyat −$1,264 vermişdi. Filtr leverage-i
+praktik olaraq ≤12×-ə məhdudlaşdırır. Strategiya bölməsində „Filtr: komissiya …“ kimi göstərilir.
+
+Demo testi (iki dövr): filtr ümumi PnL-i $456 → $1,131 və −$158 → +$149 etdi.
+
+Eksperimental, default söndürülüb (`.env`-də yandırmaq olar):
+
+- `SIGNAL_EXITS=auto` — trend/momentum strategiyaları əks siqnalda bağlanmır, yalnız stop / TP / `MAX_HOLD_HOURS`.
+- `COOLDOWN_BARS=N` — bağlanışdan sonra eyni coin-ə N şam girmə.
+
+Hər ikisi komissiyanı azaldır, amma demo testində ümumi nəticəni pisləşdirdi (kiçik siqnal zərərləri tam stopa çevrilir).
+
 ### Stop-loss
 
 Hər mövqe açılanda stop qiyməti qeyd olunur və dəyişmir:

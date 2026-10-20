@@ -26,7 +26,8 @@ F, S = 0.0005, 0.0005
 
 
 def settings(**kw) -> Settings:
-    base = dict(capital=2000.0, margin_pct=5.0, take_profit=15.0, tp_r_multiple=0.0, fee_rate=F, slippage_rate=S,
+    base = dict(capital=2000.0, margin_pct=5.0, take_profit=15.0, tp_r_multiple=0.0,
+                signal_exits='all', cooldown_bars=0, max_cost_r=0.0, max_hold_hours=0.0, fee_rate=F, slippage_rate=S,
                 maint_margin_rate=0.005, candle_delay_seconds=0)
     return Settings(**{**base, **kw})
 
@@ -577,3 +578,62 @@ def test_export_zip_has_every_strategy(tmp_path, monkeypatch):
         assert 'futures.db' in names and 'XULASE.csv' in names
         assert 'strategiyalar/dir/aciq_movqeler.csv' in names
         assert 'AUSDT' in z.read('strategiyalar/dir/aciq_movqeler.csv').decode('utf-8-sig')
+
+
+# --- cost filter, selective signal exits, cooldown, max hold ---------------------------
+def test_cost_filter_and_signal_exit_classification():
+    from app.futures import OWN_EXIT_RULES, cost_r, exits_on_signal
+    assert cost_r('supertrend', 0.003, 0.001) == pytest.approx(2 * 0.001 / 0.009)     # BTC-like: 22 % of R
+    assert cost_r('supertrend', 0.02, 0.001) == pytest.approx(2 * 0.001 / 0.06)       # alt: 3 % of R
+    assert cost_r('rsi', float('nan'), 0.001) == math.inf
+    assert exits_on_signal('rsi', 'auto') and not exits_on_signal('macd', 'auto')
+    assert exits_on_signal('macd', 'all') and not exits_on_signal('rsi', 'none')
+    assert OWN_EXIT_RULES <= {s.key for s in STRATEGIES}
+
+
+def _calm(settings_kw, closes=None):
+    m = ScriptedMarket({'AUSDT': closes or [101, 101, 101, 101, 101]}, {'AUSDT': 1})
+    return m, Engine(settings(take_profit=0.0, **settings_kw), m, Store(':memory:'), [DIR])
+
+
+def test_fee_filter_skips_entries_where_costs_eat_the_risk():
+    m, e = _calm(dict(max_cost_r=0.10))                 # scripted bars: ATR ~0.1 % -> costs >> 10 % of R
+    tick(e, m, 0)
+    assert not e.ledger.accounts['dir'].positions
+    f = e.detail('dir')['signals']['filtered']
+    assert f and f[0]['why'] == 'fee' and f[0]['cost_r'] > 0.10
+    m, e = _calm(dict(max_cost_r=0.0))
+    tick(e, m, 0)
+    assert 'AUSDT' in e.ledger.accounts['dir'].positions
+
+
+def test_stop_tp_only_rules_ignore_opposite_signal_and_time_out():
+    m, e = _calm(dict(signal_exits='none', max_hold_hours=2.0), [101, 90, 90, 90, 90])
+    tick(e, m, 0)
+    pos = e.ledger.accounts['dir'].positions['AUSDT']
+    m.live['AUSDT'] = pos.fill_price                   # keep the mark flat: no stop / TP
+    tick(e, m, 1)                                       # opposite (short) signal: ignored, no reverse
+    assert e.ledger.accounts['dir'].positions['AUSDT'].side == 1 and not e.store.trades('dir')
+    m.bar, m.offset = 2, 60_000
+    tick(e, m)                                          # > 2 h held -> timeout
+    assert e.store.trades('dir')[0]['reason'] == 'timeout'
+
+
+def test_cooldown_blocks_reentry_on_the_same_coin():
+    m, e = _calm(dict(cooldown_bars=3), [101, 90, 101, 101, 101, 101])
+    tick(e, m, 0)
+    tick(e, m, 1)                                       # long closed by the short signal; short re-entry blocked
+    assert e.store.trades('dir')[0]['reason'] in ('reverse', 'liquidation')     # 11 % gap through the stop
+    assert 'AUSDT' not in e.ledger.accounts['dir'].positions
+    assert e.detail('dir')['signals']['filtered'][0]['why'] == 'cooldown'
+    tick(e, m, 2)                                       # fresh long 1 candle later: still cooling down
+    assert 'AUSDT' not in e.ledger.accounts['dir'].positions
+    e2 = Engine(e.settings, m, e.store, [DIR])          # cooldown survives a restart (rebuilt from trades)
+    assert ('dir', 'AUSDT') in e2.last_close
+
+
+def test_new_defaults():
+    d = Settings()
+    assert (d.max_cost_r, d.signal_exits, d.cooldown_bars, d.max_hold_hours) == (0.10, 'all', 0, 0.0)
+    with pytest.raises(ValueError):
+        Settings(signal_exits='sometimes')

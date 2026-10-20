@@ -26,6 +26,10 @@ class Settings:
     risk_per_move: float = 0.25          # leverage = floor(this / (ATR% x strategy ATR multiple))
     stop_loss_pct: float = 50.0          # stop-loss: at most this % of the margin may be lost; 0 = off
     max_leverage: int = 100              # global ceiling for the leverage a strategy may choose
+    max_cost_r: float = 0.10             # skip an entry if round-trip fee+slippage > this share of the stop distance; 0 = off
+    signal_exits: str = 'all'            # all: every rule exits on its opposite signal; auto: only own-exit rules; none
+    cooldown_bars: int = 0               # after a close, the same strategy waits this many candles on that coin; 0 = off
+    max_hold_hours: float = 0.0          # close a position held longer than this; 0 = off
     fee_rate: float = 0.0005             # taker fee per side (Binance USDT-M default 0.05%)
     slippage_rate: float = 0.0005
     maint_margin_rate: float = 0.005     # maintenance margin used for the liquidation check
@@ -46,12 +50,13 @@ class Settings:
         if self.timeframe not in TIMEFRAMES:
             raise ValueError(f'TIMEFRAME bunlardan biri olmalıdır: {", ".join(TIMEFRAMES)}')
         for name, low, high in [('top_n', 1, 500), ('max_leverage', 1, 125), ('history_bars', 250, 1000),
-                                ('price_seconds', 5, 300), ('candle_delay_seconds', 0, 120), ('kline_parallelism', 1, 16)]:
+                                ('price_seconds', 5, 300), ('candle_delay_seconds', 0, 120), ('kline_parallelism', 1, 16),
+                                ('cooldown_bars', 0, 500)]:
             value = getattr(self, name)
             if type(value) is not int or not low <= value <= high:
                 raise ValueError(f'{name.upper()} {low}–{high} aralığında tam ədəd olmalıdır.')
         for name, low, high in [('capital', 10, 10_000_000), ('margin_pct', 0.1, 100), ('min_margin', 0.1, 10_000),
-                                ('take_profit', 0, 1_000_000), ('stop_loss_pct', 0, 90), ('tp_r_multiple', 0, 20), ('risk_per_move', 0.01, 1), ('fee_rate', 0, 0.01), ('slippage_rate', 0, 0.01),
+                                ('take_profit', 0, 1_000_000), ('stop_loss_pct', 0, 90), ('tp_r_multiple', 0, 20), ('risk_per_move', 0.01, 1), ('max_cost_r', 0, 1), ('max_hold_hours', 0, 10_000), ('fee_rate', 0, 0.01), ('slippage_rate', 0, 0.01),
                                 ('maint_margin_rate', 0, 0.1), ('demo_candle_seconds', 1, 3600)]:
             value = getattr(self, name)
             if not isinstance(value, (int, float)) or not math.isfinite(value) or not low <= value <= high:
@@ -60,6 +65,8 @@ class Settings:
             raise ValueError('START_CAPITAL × ORDER_MARGIN_PCT minimum marjadan (MIN_MARGIN_USDT) kiçikdir.')
         if self.maint_margin_rate >= 1 / self.max_leverage:
             raise ValueError('MAINT_MARGIN_RATE 1/MAX_LEVERAGE-dən kiçik olmalıdır (əks halda mövqe dərhal likvid olur).')
+        if self.signal_exits not in ('auto', 'all', 'none'):
+            raise ValueError('SIGNAL_EXITS auto, all və ya none olmalıdır.')
         if bool(self.user) != bool(self.password):
             raise ValueError('DASHBOARD_USER və DASHBOARD_PASSWORD birlikdə verilməlidir.')
         url = urlparse(self.binance_url)
@@ -86,6 +93,8 @@ class Settings:
             tp_r_multiple=float(env('TP_R_MULTIPLE', '1.5')), risk_per_move=float(env('RISK_PER_MOVE', '0.25')),
             stop_loss_pct=float(env('STOP_LOSS_PCT', '50')),
             max_leverage=int(env('MAX_LEVERAGE', '100')),
+            max_cost_r=float(env('MAX_COST_R', '0.10')), signal_exits=env('SIGNAL_EXITS', 'all').strip().lower(),
+            cooldown_bars=int(env('COOLDOWN_BARS', '0')), max_hold_hours=float(env('MAX_HOLD_HOURS', '0')),
             fee_rate=float(env('FEE_RATE', '0.0005')), slippage_rate=float(env('SLIPPAGE_RATE', '0.0005')),
             maint_margin_rate=float(env('MAINT_MARGIN_RATE', '0.005')),
             history_bars=int(env('HISTORY_BARS', '500')),
