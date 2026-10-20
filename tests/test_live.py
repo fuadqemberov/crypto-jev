@@ -562,3 +562,18 @@ def test_pause_endpoint_requires_basic_auth_when_configured(tmp_path):
         h = {'X-Dashboard': '1'}
         assert client.post('/api/control/entries', json={'paused': True}, headers=h).status_code == 401
         assert client.post('/api/control/entries', json={'paused': True}, headers=h, auth=('u', 'p')).status_code == 200
+
+
+def test_export_zip_has_every_strategy(tmp_path, monkeypatch):
+    import zipfile
+    from app import export
+    m = ScriptedMarket({'AUSDT': [101, 101, 101]}, {'AUSDT': 1})
+    e = Engine(settings(take_profit=0.0), m, Store(tmp_path / 'f.db'), [DIR])
+    tick(e, m, 0)
+    monkeypatch.setenv('DB', str(tmp_path / 'f.db'))
+    monkeypatch.setenv('HOME', str(tmp_path))
+    with zipfile.ZipFile(export.main()) as z:
+        names = z.namelist()
+        assert 'futures.db' in names and 'XULASE.csv' in names
+        assert 'strategiyalar/dir/aciq_movqeler.csv' in names
+        assert 'AUSDT' in z.read('strategiyalar/dir/aciq_movqeler.csv').decode('utf-8-sig')

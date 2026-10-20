@@ -151,6 +151,16 @@ API: `GET /api/overview`, `GET /api/curves`, `GET /api/strategy/{key}`, `GET /he
 - **Yarışı sıfırdan başlatmaq**: prosesi dayandırın, `data/futures.db*` fayllarını silin, yenidən başladın.
   Parametrləri dəyişsəniz də müqayisənin ədalətli qalması üçün sıfırlamaq tövsiyə olunur.
 
+## Nəticələri yükləmək (zip)
+
+```bash
+cd ~/crypto-jev && .venv/bin/python -m app.export
+```
+
+Ev qovluğunda `crypto-results-<tarix>.zip` yaranır: `XULASE.csv` (26 strategiyanın reytinqi — gəlir, uduş %, mənfəət faktoru,
+TP/stop/likvidasiya sayı), `strategiyalar/<key>/emeliyyatlar.csv`, `balans.csv`, `aciq_movqeler.csv`, BTC benchmark və
+bazanın tam surəti `futures.db`. Bot işləyərkən də təhlükəsizdir. CSV-lər Excel-də birbaşa açılır.
+
 ## Serverdə 7/24
 
 ```bash
