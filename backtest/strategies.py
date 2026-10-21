@@ -1,7 +1,8 @@
-"""Consensus branch: only the live top 5 (15–20 Oct 2026).
+"""Consensus branch: ONE account trading a 3-of-5 vote of the live top 5 (15–20 Oct 2026).
 
-Each rule trades its own account, but a new position is opened only when at least CONSENSUS_MIN (3)
-of the five hold the same direction on the same coin (see app/engine.py). Each rule maps an OHLCV frame to a 0/1 position array decided on the bar
+The five MEMBERS only analyse and vote, they have no accounts. STRATEGIES holds a single rule,
+``consensus3``: an order is opened when at least CONSENSUS_MIN (3) of the five hold the same direction
+on the same coin. Each rule maps an OHLCV frame to a 0/1 position array decided on the bar
 CLOSE; the engine acts at the next bar, so no future data is used. The other 21 rules live on master.
 """
 from __future__ import annotations
@@ -145,6 +146,25 @@ MEMBERS: list[Strategy] = [
              'Giriş MA60-a geri çəkilmədə (şamın dibi MA60-a toxunur, bağlanış üstündə). Supertrend aşağı dönəndə və ya MA60 altında çıxış.',
              s_confluence),
 ]
+CONSENSUS_MIN = 3
 
 
-STRATEGIES: list[Strategy] = list(MEMBERS)
+def member_votes(df) -> np.ndarray:
+    """Per bar: how many of the five members hold a long on this frame (on the mirrored frame: a short)."""
+    return np.sum([np.nan_to_num(np.asarray(m.fn(df), dtype=float)) > 0.5 for m in MEMBERS], axis=0)
+
+
+def s_consensus(df):
+    """Long while at least CONSENSUS_MIN of the five members are long on this coin (any three); the
+    position ends when fewer than two still agree, or at stop / TP. The futures layer applies the same
+    rule to the mirrored series, which gives the short side: >= 3 members short."""
+    votes = pd.Series(member_votes(df), index=df.index)
+    return state(votes >= CONSENSUS_MIN, votes <= 1)
+
+
+CONSENSUS = Strategy(
+    'consensus3', 'Konsensus 3/5 (top 5-dən ən azı 3-ü)', 'Konsensus',
+    'Analiz: EMA geri çəkilmə, Williams %R, ADX, Sabit 2:1 və Çakır Osilatör. İstənilən ən azı 3-ü eyni coin-də eyni '
+    'istiqamətdə (LONG və ya SHORT) olanda bir order açılır; 2-dən az strategiya razı qalanda, stop və ya TP-də bağlanır.',
+    s_consensus)
+STRATEGIES: list[Strategy] = [CONSENSUS]

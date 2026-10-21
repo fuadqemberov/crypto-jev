@@ -30,7 +30,6 @@ class Settings:
     signal_exits: str = 'all'            # all: every rule exits on its opposite signal; auto: only own-exit rules; none
     cooldown_bars: int = 0               # after a close, the same strategy waits this many candles on that coin; 0 = off
     max_hold_hours: float = 0.0          # close a position held longer than this; 0 = off
-    consensus_min: int = 3               # open only if >= this many of the 5 rules agree on coin + side; 0/1 = off
     fee_rate: float = 0.0005             # taker fee per side (Binance USDT-M default 0.05%)
     slippage_rate: float = 0.0005
     maint_margin_rate: float = 0.005     # maintenance margin used for the liquidation check
@@ -52,7 +51,7 @@ class Settings:
             raise ValueError(f'TIMEFRAME bunlardan biri olmalıdır: {", ".join(TIMEFRAMES)}')
         for name, low, high in [('top_n', 1, 500), ('max_leverage', 1, 125), ('history_bars', 250, 1000),
                                 ('price_seconds', 5, 300), ('candle_delay_seconds', 0, 120), ('kline_parallelism', 1, 16),
-                                ('cooldown_bars', 0, 500), ('consensus_min', 0, 5)]:
+                                ('cooldown_bars', 0, 500)]:
             value = getattr(self, name)
             if type(value) is not int or not low <= value <= high:
                 raise ValueError(f'{name.upper()} {low}–{high} aralığında tam ədəd olmalıdır.')
@@ -95,7 +94,6 @@ class Settings:
             stop_loss_pct=float(env('STOP_LOSS_PCT', '50')),
             max_leverage=int(env('MAX_LEVERAGE', '100')),
             max_cost_r=float(env('MAX_COST_R', '0.10')), signal_exits=env('SIGNAL_EXITS', 'all').strip().lower(),
-            consensus_min=int(env('CONSENSUS_MIN', '3')),
             cooldown_bars=int(env('COOLDOWN_BARS', '0')), max_hold_hours=float(env('MAX_HOLD_HOURS', '0')),
             fee_rate=float(env('FEE_RATE', '0.0005')), slippage_rate=float(env('SLIPPAGE_RATE', '0.0005')),
             maint_margin_rate=float(env('MAINT_MARGIN_RATE', '0.005')),

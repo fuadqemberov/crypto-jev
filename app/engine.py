@@ -1,4 +1,4 @@
-"""Live paper-trading engine: the top 5 strategies, 5 independent virtual USDT-M futures wallets.
+"""Live paper-trading engine: one consensus account (3 of the top 5 must agree), one independent virtual USDT-M futures wallets.
 
 Every ``PRICE_REFRESH_SECONDS`` mark prices and funding are refreshed and, for every account:
 funding is settled when a funding time passes, positions hitting maintenance margin are
@@ -30,6 +30,7 @@ from typing import Any
 
 import pandas as pd
 
+from backtest import strategies as rules
 from backtest.strategies import STRATEGIES, Strategy
 
 from .config import Settings
@@ -199,18 +200,15 @@ class Engine:
 
         in_universe = set(ranked)
         new_signals: dict[str, dict] = {}
-        # Consensus: how many rules hold each direction on each coin, now and on the bar before.
-        need = self.settings.consensus_min
+        # What the five voters say on this candle (shown on the dashboard; the account trades consensus3).
+        member_states = await asyncio.to_thread(evaluate, rules.MEMBERS, data)
         votes: dict[tuple[str, int], list[str]] = {}
-        prev_votes: dict[tuple[str, int], int] = {}
-        for s in self.strategies:
-            for symbol, sig in states[s.key].items():
-                if sig.cur:
-                    votes.setdefault((symbol, sig.cur), []).append(s.key)
-                if sig.prev:
-                    prev_votes[(symbol, sig.prev)] = prev_votes.get((symbol, sig.prev), 0) + 1
+        for key, sigs in member_states.items():
+            for symbol, sig in sigs.items():
+                if sig.cur and symbol in in_universe:
+                    votes.setdefault((symbol, sig.cur), []).append(key)
         agree = sorted(({'symbol': sym, 'side': SIDE[d], 'members': keys} for (sym, d), keys in votes.items()
-                        if len(keys) >= 2 and sym in in_universe), key=lambda x: -len(x['members']))
+                        if len(keys) >= 2), key=lambda x: -len(x['members']))
         for s in self.strategies:
             st: dict[str, Signal] = states[s.key]
             acc = self.ledger.accounts[s.key]
@@ -226,18 +224,7 @@ class Engine:
                 sig = st.get(symbol)
                 if not sig or sig.cur == 0 or symbol in acc.positions:
                     continue
-                if need > 1:
-                    n_now = len(votes.get((symbol, sig.cur), []))
-                    # enter when this rule is in the agreed direction and the agreement is new:
-                    # either the rule's own fresh signal, or the vote that just reached the minimum
-                    fresh = sig.prev != sig.cur or prev_votes.get((symbol, sig.cur), 0) < need
-                    if not fresh:
-                        continue
-                    if n_now < need:
-                        if sig.prev != sig.cur:
-                            filtered.append({'symbol': symbol, 'side': SIDE[sig.cur], 'why': 'consensus', 'votes': n_now})
-                        continue
-                elif sig.prev == sig.cur:
+                if sig.prev == sig.cur:
                     continue
                 if self.entries_paused:                   # new entries stopped; open positions keep running
                     paused.append({'symbol': symbol, 'side': SIDE[sig.cur]})
@@ -366,7 +353,8 @@ class Engine:
             'stop_loss_pct': self.settings.stop_loss_pct, 'tp_r_multiple': self.settings.tp_r_multiple,
             'risk_per_move': self.settings.risk_per_move, 'max_cost_r': self.settings.max_cost_r,
             'signal_exits': self.settings.signal_exits, 'cooldown_bars': self.settings.cooldown_bars,
-            'max_hold_hours': self.settings.max_hold_hours, 'consensus_min': self.settings.consensus_min,
+            'max_hold_hours': self.settings.max_hold_hours, 'consensus_min': rules.CONSENSUS_MIN,
+            'voters': [{'key': m.key, 'name': m.name} for m in rules.MEMBERS],
             'max_leverage': self.settings.max_leverage,
             'fee_pct': self.settings.fee_rate * 100, 'slippage_pct': self.settings.slippage_rate * 100,
             'candle_seconds': self.candle_seconds, 'error': self.last_error,

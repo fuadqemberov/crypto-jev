@@ -19,8 +19,8 @@ def frame(n=600, seed=1):
     return pd.DataFrame(dict(open=open_, high=high, low=low, close=close, volume=vol), index=idx)
 
 
-def test_top5_plus_consensus():
-    assert [s.key for s in STRATEGIES] == ['ema_pullback', 'williams', 'adx', 'rr_2to1', 'confluence']
+def test_single_consensus_rule():
+    assert [s.key for s in STRATEGIES] == ['consensus3']
 
 
 def test_buy_and_hold_matches_closed_form():
@@ -84,7 +84,8 @@ def test_metrics_drawdown():
 
 # --- member tactics --------------------------------------------------------------------
 def _by_key(key):
-    return next(s for s in STRATEGIES if s.key == key)
+    from backtest.strategies import MEMBERS
+    return next(s for s in [*MEMBERS, *STRATEGIES] if s.key == key)
 
 
 def _flat(n=40):
@@ -135,3 +136,13 @@ def test_confluence_requires_all_five_filters():
     for e in entries:
         assert c[e] > m50[e] > m200[e] and st[e] == 1 and 50 < r[e] < 70
 
+
+
+def test_consensus_enters_on_three_votes_and_holds_while_two_agree():
+    from backtest.strategies import member_votes
+    df = frame(4000, seed=3)
+    votes = member_votes(df)
+    pos = _by_key('consensus3').fn(df)
+    entries = np.flatnonzero(np.diff(np.concatenate([[0.0], pos])) > 0)
+    assert len(entries) >= 1 and all(votes[i] >= 3 for i in entries)
+    assert (votes[pos > 0.5] >= 2).all()

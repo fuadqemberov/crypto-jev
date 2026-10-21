@@ -83,7 +83,7 @@ function renderPause(st) {
   btn.classList.toggle('paused', !!st.entries_paused);
   btn.textContent = st.entries_paused ? '▶ Yeni siqnallara icazə ver' : '⏸ Yeni siqnalları dayandır';
   btn.title = st.entries_paused ? 'Strategiyalar yenidən yeni mövqe aça bilər' : 'Açıq mövqelər stop / TP / siqnalla bağlanana qədər davam edir, yeni mövqe açılmır';
-  const cons = st.consensus_min > 1 ? `◆ Konsensus rejimi: hər strategiya yeni mövqeni yalnız 5-dən ən azı ${st.consensus_min}-ü eyni coin-də eyni istiqamətdə razı olanda açır.` : '';
+  const cons = st.consensus_min ? `◆ Bir hesab (2000 $): top 5 strategiya analiz edir, ən azı ${st.consensus_min}-ü eyni coin-də eyni istiqamətdə razı olanda bir order açılır.` : '';
   $('paused-banner').textContent = (cons ? cons + (st.entries_paused ? '  ' : '') : '') + (st.entries_paused
     ? `⏸ Yeni siqnallar dayandırılıb (${when(st.paused_at)}) — yeni mövqe açılmır. ${st.open_positions} açıq mövqe stop / TP / siqnalla bağlanana qədər davam edir.`
     : '');
@@ -284,7 +284,7 @@ function renderDetail(d) {
     <h3>Sərbəst marja çatmadığı üçün buraxıldı</h3>${orders(sig.skipped, 'skip')}
     ${(sig.paused || []).length ? `<h3>Yeni siqnallar dayandırıldığı üçün açılmadı (${sig.paused.length})</h3>${orders(sig.paused, 'skip')}` : ''}
     ${sig.votes ? `<h3>Top 5 razılaşması — son şam (≥2 strategiya; ${d.status.consensus_min}+ olanda giriş)</h3>${sig.votes.length ? `<div class="chips">${sig.votes.map((v) => `<span class="chip ${v.side === 'LONG' ? 'buy' : 'sell'}${v.members.length >= d.status.consensus_min ? ' held' : ''}">${esc(v.symbol)} ${esc(v.side)} ${v.members.length}/5 · ${esc(v.members.join(', '))}</span>`).join('')}</div>` : none}` : ''}
-    ${(sig.filtered || []).length ? `<h3>Filtr: komissiya riskə görə çox və ya gözləmə müddəti (${sig.filtered.length})</h3>${orders(sig.filtered.map((x) => ({ ...x, symbol: x.symbol + (x.why === 'fee' ? ' · komissiya ' + Math.round(x.cost_r * 100) + '%R' : x.why === 'consensus' ? ' · razılaşma ' + x.votes + '/5' : ' · gözləmə') })), 'skip')}` : ''}
+    ${(sig.filtered || []).length ? `<h3>Filtr: komissiya riskə görə çox və ya gözləmə müddəti (${sig.filtered.length})</h3>${orders(sig.filtered.map((x) => ({ ...x, symbol: x.symbol + (x.why === 'fee' ? ' · komissiya ' + Math.round(x.cost_r * 100) + '%R' : x.why === 'consensus' ? '' : ' · gözləmə') })), 'skip')}` : ''}
     <h3>LONG rejimində (${(sig.long || []).length}${sig.evaluated ? ' / ' + sig.evaluated : ''}) — sarı çərçivə: hesabda var</h3>${active(sig.long, 'LONG')}
     <h3>SHORT rejimində (${(sig.short || []).length})</h3>${active(sig.short, 'SHORT')}`;
 

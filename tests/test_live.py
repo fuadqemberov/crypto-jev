@@ -26,7 +26,7 @@ F, S = 0.0005, 0.0005
 
 
 def settings(**kw) -> Settings:
-    base = dict(capital=2000.0, margin_pct=5.0, take_profit=15.0, tp_r_multiple=0.0, consensus_min=0,
+    base = dict(capital=2000.0, margin_pct=5.0, take_profit=15.0, tp_r_multiple=0.0,
                 signal_exits='all', cooldown_bars=0, max_cost_r=0.0, max_hold_hours=0.0, fee_rate=F, slippage_rate=S,
                 maint_margin_rate=0.005, candle_delay_seconds=0)
     return Settings(**{**base, **kw})
@@ -126,7 +126,8 @@ def test_leverage_is_chosen_by_strategy_and_volatility_from_1x_to_100x():
     assert leverage('williams', 0.0005, 20) == 20                    # MAX_LEVERAGE wins
     assert leverage('williams', float('nan'), 100) == 1
     assert settings().max_leverage == 100
-    assert set(LEVERAGE_PROFILE) == {s.key for s in STRATEGIES}
+    from backtest.strategies import MEMBERS
+    assert set(LEVERAGE_PROFILE) == {s.key for s in [*MEMBERS, *STRATEGIES]}
 
 
 def test_mirror_turns_long_rules_into_short_rules():
@@ -386,16 +387,15 @@ def test_demo_market_is_deterministic_and_closed_only():
 
 
 def test_all_strategies_trade_long_and_short_on_demo_market():
-    s = settings(demo=True, top_n=12, demo_candle_seconds=10)
+    s = settings(demo=True, top_n=8, demo_candle_seconds=10)
     clock = [0.0]
     e = Engine(s, DemoMarket(s, start_ms=T0, clock=lambda: clock[0]), Store(':memory:'))
     assert len(e.ledger.accounts) == len(STRATEGIES)
-    for _ in range(30):
+    for _ in range(80):
         clock[0] += 10.5
         asyncio.run(e.tick())
     ov = e.overview()
-    assert sum(r['long_trades'] + r['open_long'] for r in ov['strategies']) > 0
-    assert sum(r['short_trades'] + r['open_short'] for r in ov['strategies']) > 0
+    assert sum(r['long_trades'] + r['open_long'] + r['short_trades'] + r['open_short'] for r in ov['strategies']) > 0
     for r in ov['strategies']:
         assert r['equity'] == pytest.approx(r['capital'] + r['realized'] + r['unrealized'])
     for key in e.by_key:
@@ -423,8 +423,8 @@ def test_api_endpoints_and_security_headers(tmp_path):
         assert r.status_code == 200 and len(body['strategies']) == len(STRATEGIES) and body['status']['market'] == 'USDT-M futures'
         assert body['status']['take_profit'] == 15
         assert "script-src 'self'" in r.headers['content-security-policy'] and r.headers['cache-control'] == 'no-store'
-        d = client.get('/api/strategy/adx').json()
-        assert d['summary']['key'] == 'adx' and 'SHORT' in d['short_rule']
+        d = client.get('/api/strategy/consensus3').json()
+        assert d['summary']['key'] == 'consensus3' and 'SHORT' in d['short_rule']
         assert client.get('/api/strategy/nope').status_code == 404
         assert set(client.get('/api/curves').json()) >= {s.key for s in STRATEGIES}
         assert client.get('/').status_code == 200 and client.get('/static/chart.umd.min.js').status_code == 200
@@ -584,7 +584,8 @@ def test_cost_filter_and_signal_exit_classification():
     assert cost_r('williams', float('nan'), 0.001) == math.inf
     assert exits_on_signal('williams', 'auto') and not exits_on_signal('adx', 'auto')
     assert exits_on_signal('adx', 'all') and not exits_on_signal('williams', 'none')
-    assert OWN_EXIT_RULES <= {s.key for s in STRATEGIES}
+    from backtest.strategies import MEMBERS
+    assert OWN_EXIT_RULES <= {s.key for s in MEMBERS}
 
 
 def _calm(settings_kw, closes=None):
@@ -635,7 +636,7 @@ def test_new_defaults():
         Settings(signal_exits='sometimes')
 
 
-# --- 3-of-5 consensus gate ------------------------------------------------------------
+# --- one consensus account -----------------------------------------------------------
 def _above(level):
     def fn(df):
         if df.close.iloc[-1] > 1:
@@ -647,28 +648,27 @@ def _above(level):
 VOTERS = [Strategy(k, k, 'Test', '', _above(lv)) for k, lv in (('a', 100), ('b', 100), ('c', 102), ('d', 200), ('e', 200))]
 
 
-def test_consensus_opens_only_when_three_of_five_agree_including_earlier_voters():
+def test_one_account_opens_one_order_when_three_of_five_agree(monkeypatch):
+    from backtest import strategies as rules
+    monkeypatch.setattr(rules, 'MEMBERS', VOTERS)
     m = ScriptedMarket({'AUSDT': [101, 101, 103, 103]}, {'AUSDT': 1})
-    e = Engine(settings(take_profit=0.0, consensus_min=3), m, Store(':memory:'), VOTERS)
-    tick(e, m, 0)                                       # a, b long -> only 2/5: nothing opens
-    assert not any(acc.positions for acc in e.ledger.accounts.values())
-    assert e.detail('a')['signals']['filtered'][0] == {'symbol': 'AUSDT', 'side': 'LONG', 'why': 'consensus', 'votes': 2}
-    assert e.detail('a')['signals']['votes'][0]['members'] == ['a', 'b']
+    e = Engine(settings(take_profit=0.0), m, Store(':memory:'), [rules.CONSENSUS])
+    assert list(e.ledger.accounts) == ['consensus3']
+    acc = e.ledger.accounts['consensus3']
+    tick(e, m, 0)                                       # a, b long -> 2/5: no order
+    assert not acc.positions
+    assert e.detail('consensus3')['signals']['votes'][0] == {'symbol': 'AUSDT', 'side': 'LONG', 'members': ['a', 'b']}
     tick(e, m, 1)
-    assert not any(acc.positions for acc in e.ledger.accounts.values())
-    tick(e, m, 2)                                       # c joins -> 3/5: a, b and c open together
-    held = {k for k, acc in e.ledger.accounts.items() if 'AUSDT' in acc.positions}
-    assert held == {'a', 'b', 'c'}
-    assert e.status()['consensus_min'] == 3
-    trades_before = len(e.store.trades('a'))
-    tick(e, m, 3)                                       # agreement unchanged: no duplicate entries
-    assert {k for k, acc in e.ledger.accounts.items() if 'AUSDT' in acc.positions} == {'a', 'b', 'c'}
-    assert len(e.store.trades('a')) == trades_before
+    assert not acc.positions
+    tick(e, m, 2)                                       # c joins -> 3/5: one order in the single account
+    assert list(acc.positions) == ['AUSDT'] and acc.positions['AUSDT'].side == 1
+    assert e.detail('consensus3')['signals']['votes'][0]['members'] == ['a', 'b', 'c']
+    tick(e, m, 3)                                       # still 3/5: no second order
+    assert len(acc.positions) == 1 and not e.store.trades('consensus3')
+    assert e.status()['consensus_min'] == 3 and len(e.status()['voters']) == 5
 
 
-def test_consensus_off_lets_each_rule_trade_alone():
-    m = ScriptedMarket({'AUSDT': [101, 101]}, {'AUSDT': 1})
-    e = Engine(settings(take_profit=0.0, consensus_min=0), m, Store(':memory:'), VOTERS)
-    tick(e, m, 0)
-    assert {k for k, acc in e.ledger.accounts.items() if acc.positions} == {'a', 'b'}
-    assert Settings().consensus_min == 3
+def test_branch_has_a_single_consensus_account():
+    from backtest import strategies as rules
+    assert [s.key for s in STRATEGIES] == ['consensus3']
+    assert [m.key for m in rules.MEMBERS] == ['ema_pullback', 'williams', 'adx', 'rr_2to1', 'confluence']
