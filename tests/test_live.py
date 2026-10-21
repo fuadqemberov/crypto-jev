@@ -1,4 +1,4 @@
-"""Live 26-account USDT-M futures paper engine: accounting, signals, TP, liquidation, funding, API."""
+"""Live consensus-branch USDT-M futures paper engine: accounting, signals, TP, liquidation, funding, API."""
 from __future__ import annotations
 
 import asyncio
@@ -26,7 +26,7 @@ F, S = 0.0005, 0.0005
 
 
 def settings(**kw) -> Settings:
-    base = dict(capital=2000.0, margin_pct=5.0, take_profit=15.0, tp_r_multiple=0.0,
+    base = dict(capital=2000.0, margin_pct=5.0, take_profit=15.0, tp_r_multiple=0.0, consensus_min=0,
                 signal_exits='all', cooldown_bars=0, max_cost_r=0.0, max_hold_hours=0.0, fee_rate=F, slippage_rate=S,
                 maint_margin_rate=0.005, candle_delay_seconds=0)
     return Settings(**{**base, **kw})
@@ -116,14 +116,15 @@ def test_ledger_persists_across_restart(tmp_path):
 
 # --- strategy layer -------------------------------------------------------------------
 def test_leverage_is_chosen_by_strategy_and_volatility_from_1x_to_100x():
-    assert leverage('rsi', 0.004, 100) == 31                         # floor(0.25 / 0.008)
-    assert leverage('donchian', 0.004, 100) == 17                    # floor(0.25 / 0.014)
-    assert leverage('sma_cross', 0.04, 100) == 2                     # floor(0.25 / 0.12)
-    assert leverage('rsi', 0.004, 100, 0.5) == 62                    # RISK_PER_MOVE=0.5 doubles it
-    assert leverage('rsi', 0.0005, 100) == 100                       # very calm coin -> capped at 100x
-    assert leverage('sma_cross', 0.5, 100) == 1                      # never below 1x
-    assert leverage('rsi', 0.0005, 20) == 20                         # MAX_LEVERAGE wins
-    assert leverage('rsi', float('nan'), 100) == 1
+    assert leverage('williams', 0.004, 100) == 31                    # floor(0.25 / 0.008)
+    assert leverage('adx', 0.004, 100) == 20                         # floor(0.25 / 0.012)
+    assert leverage('adx', 0.04, 100) == 2                           # floor(0.25 / 0.12)
+    assert leverage('williams', 0.004, 100, 0.5) == 62               # RISK_PER_MOVE=0.5 doubles it
+    assert leverage('williams', 0.0005, 100) == 100                  # very calm coin -> capped at 100x
+    assert leverage('confluence', 0.0005, 100) == 5                  # its own 5x ceiling
+    assert leverage('adx', 0.5, 100) == 1                            # never below 1x
+    assert leverage('williams', 0.0005, 20) == 20                    # MAX_LEVERAGE wins
+    assert leverage('williams', float('nan'), 100) == 1
     assert settings().max_leverage == 100
     assert set(LEVERAGE_PROFILE) == {s.key for s in STRATEGIES}
 
@@ -135,14 +136,9 @@ def test_mirror_turns_long_rules_into_short_rules():
                       index=pd.Index(T0 + np.arange(400) * H, name='time'))
     m = mirror(df)
     assert (m.high >= m.low).all() and np.allclose(mirror(m).close, df.close)
-    sma = next(s for s in STRATEGIES if s.key == 'sma_cross')
-    d = direction(sma, df)
+    ema = Strategy('ema', 'EMA', 'Test', '', lambda df: (df.close.ewm(span=12).mean() > df.close.ewm(span=26).mean()).astype(float).to_numpy())
+    d = direction(ema, df)
     assert set(np.unique(d)) <= {-1, 0, 1} and (d == 1).any() and (d == -1).any()
-    from backtest import indicators as ind
-    fast, slow = ind.sma(df.close, 20), ind.sma(df.close, 50)
-    clear = ((fast / slow - 1).abs() > 0.002).to_numpy()            # away from the crossing itself
-    assert (d[clear & (fast < slow).to_numpy()] == -1).all()
-    assert (d[clear & (fast > slow).to_numpy()] == 1).all()
 
 
 def test_evaluate_isolates_a_failing_strategy():
@@ -390,7 +386,7 @@ def test_demo_market_is_deterministic_and_closed_only():
 
 
 def test_all_strategies_trade_long_and_short_on_demo_market():
-    s = settings(demo=True, top_n=6, demo_candle_seconds=10)
+    s = settings(demo=True, top_n=12, demo_candle_seconds=10)
     clock = [0.0]
     e = Engine(s, DemoMarket(s, start_ms=T0, clock=lambda: clock[0]), Store(':memory:'))
     assert len(e.ledger.accounts) == len(STRATEGIES)
@@ -427,8 +423,8 @@ def test_api_endpoints_and_security_headers(tmp_path):
         assert r.status_code == 200 and len(body['strategies']) == len(STRATEGIES) and body['status']['market'] == 'USDT-M futures'
         assert body['status']['take_profit'] == 15
         assert "script-src 'self'" in r.headers['content-security-policy'] and r.headers['cache-control'] == 'no-store'
-        d = client.get('/api/strategy/rsi').json()
-        assert d['summary']['key'] == 'rsi' and 'SHORT' in d['short_rule']
+        d = client.get('/api/strategy/adx').json()
+        assert d['summary']['key'] == 'adx' and 'SHORT' in d['short_rule']
         assert client.get('/api/strategy/nope').status_code == 404
         assert set(client.get('/api/curves').json()) >= {s.key for s in STRATEGIES}
         assert client.get('/').status_code == 200 and client.get('/static/chart.umd.min.js').status_code == 200
@@ -583,11 +579,11 @@ def test_export_zip_has_every_strategy(tmp_path, monkeypatch):
 # --- cost filter, selective signal exits, cooldown, max hold ---------------------------
 def test_cost_filter_and_signal_exit_classification():
     from app.futures import OWN_EXIT_RULES, cost_r, exits_on_signal
-    assert cost_r('supertrend', 0.003, 0.001) == pytest.approx(2 * 0.001 / 0.009)     # BTC-like: 22 % of R
-    assert cost_r('supertrend', 0.02, 0.001) == pytest.approx(2 * 0.001 / 0.06)       # alt: 3 % of R
-    assert cost_r('rsi', float('nan'), 0.001) == math.inf
-    assert exits_on_signal('rsi', 'auto') and not exits_on_signal('macd', 'auto')
-    assert exits_on_signal('macd', 'all') and not exits_on_signal('rsi', 'none')
+    assert cost_r('adx', 0.003, 0.001) == pytest.approx(2 * 0.001 / 0.009)            # BTC-like: 22 % of R
+    assert cost_r('adx', 0.02, 0.001) == pytest.approx(2 * 0.001 / 0.06)              # alt: 3 % of R
+    assert cost_r('williams', float('nan'), 0.001) == math.inf
+    assert exits_on_signal('williams', 'auto') and not exits_on_signal('adx', 'auto')
+    assert exits_on_signal('adx', 'all') and not exits_on_signal('williams', 'none')
     assert OWN_EXIT_RULES <= {s.key for s in STRATEGIES}
 
 
@@ -637,3 +633,42 @@ def test_new_defaults():
     assert (d.max_cost_r, d.signal_exits, d.cooldown_bars, d.max_hold_hours) == (0.10, 'all', 0, 0.0)
     with pytest.raises(ValueError):
         Settings(signal_exits='sometimes')
+
+
+# --- 3-of-5 consensus gate ------------------------------------------------------------
+def _above(level):
+    def fn(df):
+        if df.close.iloc[-1] > 1:
+            return (df.close > level).astype(float).to_numpy()
+        return ((1 / df.close) < 90).astype(float).to_numpy()
+    return fn
+
+
+VOTERS = [Strategy(k, k, 'Test', '', _above(lv)) for k, lv in (('a', 100), ('b', 100), ('c', 102), ('d', 200), ('e', 200))]
+
+
+def test_consensus_opens_only_when_three_of_five_agree_including_earlier_voters():
+    m = ScriptedMarket({'AUSDT': [101, 101, 103, 103]}, {'AUSDT': 1})
+    e = Engine(settings(take_profit=0.0, consensus_min=3), m, Store(':memory:'), VOTERS)
+    tick(e, m, 0)                                       # a, b long -> only 2/5: nothing opens
+    assert not any(acc.positions for acc in e.ledger.accounts.values())
+    assert e.detail('a')['signals']['filtered'][0] == {'symbol': 'AUSDT', 'side': 'LONG', 'why': 'consensus', 'votes': 2}
+    assert e.detail('a')['signals']['votes'][0]['members'] == ['a', 'b']
+    tick(e, m, 1)
+    assert not any(acc.positions for acc in e.ledger.accounts.values())
+    tick(e, m, 2)                                       # c joins -> 3/5: a, b and c open together
+    held = {k for k, acc in e.ledger.accounts.items() if 'AUSDT' in acc.positions}
+    assert held == {'a', 'b', 'c'}
+    assert e.status()['consensus_min'] == 3
+    trades_before = len(e.store.trades('a'))
+    tick(e, m, 3)                                       # agreement unchanged: no duplicate entries
+    assert {k for k, acc in e.ledger.accounts.items() if 'AUSDT' in acc.positions} == {'a', 'b', 'c'}
+    assert len(e.store.trades('a')) == trades_before
+
+
+def test_consensus_off_lets_each_rule_trade_alone():
+    m = ScriptedMarket({'AUSDT': [101, 101]}, {'AUSDT': 1})
+    e = Engine(settings(take_profit=0.0, consensus_min=0), m, Store(':memory:'), VOTERS)
+    tick(e, m, 0)
+    assert {k for k, acc in e.ledger.accounts.items() if acc.positions} == {'a', 'b'}
+    assert Settings().consensus_min == 3

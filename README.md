@@ -1,4 +1,14 @@
-# 26 Strategiya — canlı virtual futures ticarəti
+# Top 5 konsensus — `consensus-3of5` branch
+
+> Bu branch-da yalnız canlı nəticələrdə (15–20 okt. 2026) ən yaxşı 5 strategiya qalıb: **EMA geri çəkilmə + 3 qayda,
+> Williams %R, ADX trend izləmə, Sabit 2:1 R/R, Çakır Osilatör**. Qalan 21 strategiya `master`-dədir.
+>
+> **Qayda:** hər strategiya öz 2000 $ hesabında ticarət edir, amma yeni mövqeni yalnız **5-dən ən azı 3-ü** (fərqi yoxdur
+> hansı 3-ü) eyni coin-də eyni istiqamətdə (LONG və ya SHORT) olanda açır. Razılaşma yarananda razı olan bütün
+> strategiyalar — əvvəldən gözləyənlər də — birlikdə girir. Çıxış hər strategiyanın öz qaydası + stop / TP ilədir.
+> `CONSENSUS_MIN` (.env, default 3) — 2, 4 və ya 5 də qoymaq olar; 0 → hər strategiya tək işləyir.
+> Strategiya bölməsində son şamda neçə strategiyanın razılaşdığı və „razılaşma 2/5“ səbəbi ilə açılmayan siqnallar görünür.
+
 
 Python 3.12+ · FastAPI · Binance USDT-M futures açıq bazar məlumatı · Azərbaycan dilində dashboard.
 

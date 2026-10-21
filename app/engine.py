@@ -1,4 +1,4 @@
-"""Live paper-trading engine: 26 strategies, 26 independent virtual USDT-M futures wallets.
+"""Live paper-trading engine: the top 5 strategies, 5 independent virtual USDT-M futures wallets.
 
 Every ``PRICE_REFRESH_SECONDS`` mark prices and funding are refreshed and, for every account:
 funding is settled when a funding time passes, positions hitting maintenance margin are
@@ -199,6 +199,18 @@ class Engine:
 
         in_universe = set(ranked)
         new_signals: dict[str, dict] = {}
+        # Consensus: how many rules hold each direction on each coin, now and on the bar before.
+        need = self.settings.consensus_min
+        votes: dict[tuple[str, int], list[str]] = {}
+        prev_votes: dict[tuple[str, int], int] = {}
+        for s in self.strategies:
+            for symbol, sig in states[s.key].items():
+                if sig.cur:
+                    votes.setdefault((symbol, sig.cur), []).append(s.key)
+                if sig.prev:
+                    prev_votes[(symbol, sig.prev)] = prev_votes.get((symbol, sig.prev), 0) + 1
+        agree = sorted(({'symbol': sym, 'side': SIDE[d], 'members': keys} for (sym, d), keys in votes.items()
+                        if len(keys) >= 2 and sym in in_universe), key=lambda x: -len(x['members']))
         for s in self.strategies:
             st: dict[str, Signal] = states[s.key]
             acc = self.ledger.accounts[s.key]
@@ -212,7 +224,20 @@ class Engine:
                         exits.append({'symbol': symbol, 'side': SIDE[pos.side], 'pnl': trade['pnl']})
             for symbol in ranked:
                 sig = st.get(symbol)
-                if not sig or sig.cur == 0 or sig.prev == sig.cur or symbol in acc.positions:
+                if not sig or sig.cur == 0 or symbol in acc.positions:
+                    continue
+                if need > 1:
+                    n_now = len(votes.get((symbol, sig.cur), []))
+                    # enter when this rule is in the agreed direction and the agreement is new:
+                    # either the rule's own fresh signal, or the vote that just reached the minimum
+                    fresh = sig.prev != sig.cur or prev_votes.get((symbol, sig.cur), 0) < need
+                    if not fresh:
+                        continue
+                    if n_now < need:
+                        if sig.prev != sig.cur:
+                            filtered.append({'symbol': symbol, 'side': SIDE[sig.cur], 'why': 'consensus', 'votes': n_now})
+                        continue
+                elif sig.prev == sig.cur:
                     continue
                 if self.entries_paused:                   # new entries stopped; open positions keep running
                     paused.append({'symbol': symbol, 'side': SIDE[sig.cur]})
@@ -234,7 +259,7 @@ class Engine:
                 else:
                     skipped.append({'symbol': symbol, 'side': SIDE[sig.cur], 'leverage': lev})
             new_signals[s.key] = {
-                'candle': closed, 'entries': entries, 'exits': exits, 'skipped': skipped, 'paused': paused, 'filtered': filtered,
+                'candle': closed, 'entries': entries, 'exits': exits, 'skipped': skipped, 'paused': paused, 'filtered': filtered, 'votes': agree,
                 'long': [sym for sym in ranked if sym in st and st[sym].cur == 1],
                 'short': [sym for sym in ranked if sym in st and st[sym].cur == -1],
                 'evaluated': sum(1 for sym in st if sym in in_universe)}
@@ -341,7 +366,7 @@ class Engine:
             'stop_loss_pct': self.settings.stop_loss_pct, 'tp_r_multiple': self.settings.tp_r_multiple,
             'risk_per_move': self.settings.risk_per_move, 'max_cost_r': self.settings.max_cost_r,
             'signal_exits': self.settings.signal_exits, 'cooldown_bars': self.settings.cooldown_bars,
-            'max_hold_hours': self.settings.max_hold_hours,
+            'max_hold_hours': self.settings.max_hold_hours, 'consensus_min': self.settings.consensus_min,
             'max_leverage': self.settings.max_leverage,
             'fee_pct': self.settings.fee_rate * 100, 'slippage_pct': self.settings.slippage_rate * 100,
             'candle_seconds': self.candle_seconds, 'error': self.last_error,

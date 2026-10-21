@@ -19,9 +19,8 @@ def frame(n=600, seed=1):
     return pd.DataFrame(dict(open=open_, high=high, low=low, close=close, volume=vol), index=idx)
 
 
-def test_twenty_six_unique_strategies():
-    assert len(STRATEGIES) == 26
-    assert len({s.key for s in STRATEGIES}) == 26
+def test_top5_plus_consensus():
+    assert [s.key for s in STRATEGIES] == ['ema_pullback', 'williams', 'adx', 'rr_2to1', 'confluence']
 
 
 def test_buy_and_hold_matches_closed_form():
@@ -83,7 +82,7 @@ def test_metrics_drawdown():
     assert m['total_return'] == pytest.approx(-17.5)
 
 
-# --- 3 YouTube tactics --------------------------------------------------------------------
+# --- member tactics --------------------------------------------------------------------
 def _by_key(key):
     return next(s for s in STRATEGIES if s.key == key)
 
@@ -91,34 +90,6 @@ def _by_key(key):
 def _flat(n=40):
     idx = pd.Index(np.arange(n) * HOUR, name='time')
     return pd.DataFrame(dict(open=100.0, high=101.0, low=99.0, close=100.0, volume=500.0), index=idx)
-
-
-@pytest.mark.parametrize('exit_close, exit_reason', [(101.2, 'target'), (96.5, 'stop')])
-def test_liq_sweep_enters_on_reclaimed_sweep_and_exits_at_pool_or_wick(exit_close, exit_reason):
-    df = _flat()
-    df.loc[df.index[30], ['low', 'close']] = [97.0, 99.5]       # wick under the 20-bar low (99), close back above
-    df.loc[df.index[35], ['high', 'low', 'close']] = [max(101.3, exit_close), min(96.0, exit_close), exit_close]
-    pos = _by_key('liq_sweep').fn(df)
-    assert pos[29] == 0 and pos[30:35].tolist() == [1] * 5 and pos[35] == 0, exit_reason
-
-
-def test_liq_sweep_ignores_a_sweep_that_closes_below_the_pool():
-    df = _flat()
-    df.loc[df.index[30], ['low', 'close']] = [97.0, 98.0]
-    assert _by_key('liq_sweep').fn(df).sum() == 0
-
-
-def test_macd_hist_enters_after_two_dark_greens_and_leaves_on_first_light_green():
-    from backtest import indicators as ind
-    df = frame(1500, seed=11)
-    pos = _by_key('macd_hist').fn(df)
-    h = ind.macd(df.close)[2].to_numpy()
-    entries = np.flatnonzero(np.diff(np.concatenate([[0.0], pos])) > 0)
-    assert len(entries) > 5
-    for i in entries:
-        assert h[i] > h[i - 1] > 0 and h[i - 1] > h[i - 2]
-    held = np.flatnonzero(pos[1:] * pos[:-1]) + 1                 # bars held on both sides
-    assert np.all(h[held] >= h[held - 1]) and np.all(h[held] > 0)
 
 
 def test_rr_2to1_exits_only_at_minus_half_or_plus_one_percent():
@@ -151,18 +122,6 @@ def test_ema_pullback_respects_session_filter_and_one_stop_per_day():
         assert day[e] != day[x]                         # ...so no new entry on that UTC day
 
 
-def test_range_scalp_buys_bottom_quarter_and_exits_at_top_or_stop():
-    df = frame(4000, seed=7)
-    pos = _by_key('range_scalp').fn(df)
-    entries, _ = _entries_exits(pos)
-    assert len(entries) > 5
-    hi = df.high.rolling(24).max().shift().to_numpy()
-    lo = df.low.rolling(24).min().shift().to_numpy()
-    c = df.close.to_numpy()
-    for e in entries:
-        assert lo[e] < c[e] <= lo[e] + 0.25 * (hi[e] - lo[e])
-
-
 def test_confluence_requires_all_five_filters():
     from backtest import indicators as ind
     df = frame(6000, seed=2)
@@ -175,3 +134,4 @@ def test_confluence_requires_all_five_filters():
     c = df.close.to_numpy()
     for e in entries:
         assert c[e] > m50[e] > m200[e] and st[e] == 1 and 50 < r[e] < 70
+

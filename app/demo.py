@@ -1,6 +1,6 @@
 """Deterministic synthetic market for DEMO_MODE and tests (no network).
 
-A virtual clock advances one candle every ``demo_candle_seconds`` so all 26 strategies can be
+A virtual clock advances one candle every ``demo_candle_seconds`` so all strategies can be
 watched trading within minutes. Prices are a pure function of (symbol, bar index): restarting
 the process reproduces the same history.
 """

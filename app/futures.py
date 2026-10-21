@@ -1,4 +1,4 @@
-"""Futures layer on top of the 26 long-only rules in ``backtest/strategies.py``.
+"""Futures layer on top of the long-only rules in ``backtest/strategies.py``.
 
 Direction
     LONG  – the strategy's own long rule on the real price series.
@@ -34,16 +34,8 @@ RISK_PER_TYPICAL_MOVE = 0.25   # default of RISK_PER_MOVE
 
 # key -> (expected adverse move in ATR multiples, leverage ceiling)
 LEVERAGE_PROFILE: dict[str, tuple[float, int]] = {
-    'sma_cross': (3.0, 100), 'ema_cross': (3.0, 100), 'rsi': (2.0, 100), 'macd': (2.5, 100),
-    'bb_revert': (2.0, 100), 'bb_break': (3.0, 100), 'stoch': (2.0, 100), 'adx': (3.0, 100),
-    'ichimoku': (3.0, 100), 'vwap': (2.5, 100), 'supertrend': (3.0, 100), 'donchian': (3.5, 100),
-    'williams': (2.0, 100), 'cci': (2.0, 100), 'psar': (2.5, 100), 'keltner': (3.0, 100),
-    'atr_trail': (3.0, 100), 'tema': (2.5, 100), 'mfi': (2.0, 100), 'rsi_macd': (2.5, 100),
-    # YouTube tactics: the sweep and histogram rules use the same formula; the fixed 2:1 rule is
-    # capped at the 20x its source trades with (its -0.5 % stop = -10 % of margin there).
-    'liq_sweep': (2.0, 100), 'macd_hist': (2.5, 100), 'rr_2to1': (2.0, 20),
-    # ceilings from the videos: 25x for the pull-back rules, 3-5x for the bot signals
-    'ema_pullback': (2.5, 25), 'range_scalp': (2.0, 100), 'confluence': (3.0, 5),
+    'ema_pullback': (2.5, 25), 'williams': (2.0, 100), 'adx': (3.0, 100), 'rr_2to1': (2.0, 20),
+    'confluence': (3.0, 5),
 }
 DEFAULT_PROFILE = (3.0, 100)
 
@@ -51,8 +43,7 @@ DEFAULT_PROFILE = (3.0, 100)
 # stop keep closing on it — mean-reversion and rules with a built-in stop / target / trail; trend, momentum
 # and breakout cross-overs then end only at stop / TP / max hold. Their signal exits lost money live
 # (15–18 Oct 2026), but in demo runs replacing them with full stops was worse overall, hence 'all' default.
-OWN_EXIT_RULES = frozenset({'rsi', 'bb_revert', 'stoch', 'williams', 'cci', 'mfi',
-                            'atr_trail', 'liq_sweep', 'rr_2to1', 'ema_pullback', 'range_scalp'})
+OWN_EXIT_RULES = frozenset({'williams', 'rr_2to1', 'ema_pullback'})
 
 
 def exits_on_signal(key: str, mode: str) -> bool:
