@@ -83,7 +83,7 @@ function renderPause(st) {
   btn.classList.toggle('paused', !!st.entries_paused);
   btn.textContent = st.entries_paused ? '▶ Yeni siqnallara icazə ver' : '⏸ Yeni siqnalları dayandır';
   btn.title = st.entries_paused ? 'Strategiyalar yenidən yeni mövqe aça bilər' : 'Açıq mövqelər stop / TP / siqnalla bağlanana qədər davam edir, yeni mövqe açılmır';
-  const cons = st.consensus_min ? `◆ Bir hesab (2000 $): top 5 strategiya analiz edir, ən azı ${st.consensus_min}-ü eyni coin-də eyni istiqamətdə razı olanda bir order açılır.` : '';
+  const cons = st.consensus_min ? `◆ 6 hesab: top 5 strategiyanın hər biri öz order-lərini açır; „Konsensus 3/5“ hesabı isə yalnız ən azı ${st.consensus_min}-ü eyni coin-də eyni istiqamətdə razı olanda order açır.` : '';
   $('paused-banner').textContent = (cons ? cons + (st.entries_paused ? '  ' : '') : '') + (st.entries_paused
     ? `⏸ Yeni siqnallar dayandırılıb (${when(st.paused_at)}) — yeni mövqe açılmır. ${st.open_positions} açıq mövqe stop / TP / siqnalla bağlanana qədər davam edir.`
     : '');

@@ -1,8 +1,7 @@
-"""Consensus branch: ONE account trading a 3-of-5 vote of the live top 5 (15–20 Oct 2026).
+"""Consensus branch: the live top 5 (15–20 Oct 2026) plus a 3-of-5 consensus — 6 accounts.
 
-The five MEMBERS only analyse and vote, they have no accounts. STRATEGIES holds a single rule,
-``consensus3``: an order is opened when at least CONSENSUS_MIN (3) of the five hold the same direction
-on the same coin. Each rule maps an OHLCV frame to a 0/1 position array decided on the bar
+Each of the five MEMBERS trades its own account with its own orders. The sixth account, ``consensus3``,
+opens one order when at least CONSENSUS_MIN (3) of the five hold the same direction on the same coin. Each rule maps an OHLCV frame to a 0/1 position array decided on the bar
 CLOSE; the engine acts at the next bar, so no future data is used. The other 21 rules live on master.
 """
 from __future__ import annotations
@@ -167,4 +166,4 @@ CONSENSUS = Strategy(
     'Analiz: EMA geri çəkilmə, Williams %R, ADX, Sabit 2:1 və Çakır Osilatör. İstənilən ən azı 3-ü eyni coin-də eyni '
     'istiqamətdə (LONG və ya SHORT) olanda bir order açılır; 2-dən az strategiya razı qalanda, stop və ya TP-də bağlanır.',
     s_consensus)
-STRATEGIES: list[Strategy] = [CONSENSUS]
+STRATEGIES: list[Strategy] = [*MEMBERS, CONSENSUS]   # 6 accounts: the five trade alone + the consensus

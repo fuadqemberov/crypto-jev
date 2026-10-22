@@ -1,4 +1,4 @@
-"""Live paper-trading engine: one consensus account (3 of the top 5 must agree), one independent virtual USDT-M futures wallets.
+"""Live paper-trading engine: the top 5 strategies + a 3-of-5 consensus, 6 independent virtual USDT-M futures wallets.
 
 Every ``PRICE_REFRESH_SECONDS`` mark prices and funding are refreshed and, for every account:
 funding is settled when a funding time passes, positions hitting maintenance margin are
@@ -201,7 +201,9 @@ class Engine:
         in_universe = set(ranked)
         new_signals: dict[str, dict] = {}
         # What the five voters say on this candle (shown on the dashboard; the account trades consensus3).
-        member_states = await asyncio.to_thread(evaluate, rules.MEMBERS, data)
+        missing = [m for m in rules.MEMBERS if m.key not in states]     # voters without an account here
+        member_states = {**{m.key: states[m.key] for m in rules.MEMBERS if m.key in states},
+                         **(await asyncio.to_thread(evaluate, missing, data) if missing else {})}
         votes: dict[tuple[str, int], list[str]] = {}
         for key, sigs in member_states.items():
             for symbol, sig in sigs.items():

@@ -1,11 +1,12 @@
 # Top 5 konsensus — `consensus-3of5` branch
 
-> **Bir hesab, 2000 $.** Canlı nəticələrdə (15–20 okt. 2026) ən yaxşı 5 strategiya — **EMA geri çəkilmə + 3 qayda,
-> Williams %R, ADX trend izləmə, Sabit 2:1 R/R, Çakır Osilatör** — yalnız analiz edir (səs verir), öz hesabları yoxdur.
-> İstənilən **ən azı 3-ü** eyni coin-də eyni istiqamətdə (LONG və ya SHORT) olanda həmin hesabda **bir order** açılır.
-> Order 2-dən az strategiya razı qalanda, stop-loss və ya 1.5R TP-də bağlanır. Komissiya filtri və stop qaydaları eynidir.
+> **6 hesab, hər biri 2000 $.** Canlı nəticələrdə (15–20 okt. 2026) ən yaxşı 5 strategiya — **EMA geri çəkilmə + 3 qayda,
+> Williams %R, ADX trend izləmə, Sabit 2:1 R/R, Çakır Osilatör** — hər biri öz hesabında öz order-lərini açır.
+> 6-cı hesab **Konsensus 3/5**: bu 5-dən istənilən **ən azı 3-ü** eyni coin-də eyni istiqamətdə (LONG və ya SHORT) olanda
+> bir order açır; 2-dən az strategiya razı qalanda, stop-loss və ya 1.5R TP-də bağlanır. Beləliklə konsensusun tək
+> strategiyalardan yaxşı olub-olmadığını eyni bazarda birbaşa müqayisə etmək olur.
 > Dashboard-da son şamın razılaşmaları görünür (məs. `SOLUSDT SHORT 3/5 · ema_pullback, williams, adx`).
-> Qalan 21 strategiya və 26 hesablı versiya `master`-dədir.
+> Qalan 21 strategiya `master`-dədir.
 
 
 Python 3.12+ · FastAPI · Binance USDT-M futures açıq bazar məlumatı · Azərbaycan dilində dashboard.

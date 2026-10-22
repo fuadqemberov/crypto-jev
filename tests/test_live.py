@@ -668,7 +668,21 @@ def test_one_account_opens_one_order_when_three_of_five_agree(monkeypatch):
     assert e.status()['consensus_min'] == 3 and len(e.status()['voters']) == 5
 
 
-def test_branch_has_a_single_consensus_account():
+def test_branch_has_top5_plus_consensus_accounts(tmp_path):
     from backtest import strategies as rules
-    assert [s.key for s in STRATEGIES] == ['consensus3']
+    assert [s.key for s in STRATEGIES] == ['ema_pullback', 'williams', 'adx', 'rr_2to1', 'confluence', 'consensus3']
+    e = Engine(settings(), ScriptedMarket({'AUSDT': [101]}, {'AUSDT': 1}), Store(tmp_path / 'six.db'))
+    assert len(e.ledger.accounts) == 6
     assert [m.key for m in rules.MEMBERS] == ['ema_pullback', 'williams', 'adx', 'rr_2to1', 'confluence']
+
+
+def test_members_trade_alone_and_consensus_waits_for_three(monkeypatch):
+    from backtest import strategies as rules
+    monkeypatch.setattr(rules, 'MEMBERS', VOTERS)
+    m = ScriptedMarket({'AUSDT': [101, 101, 103]}, {'AUSDT': 1})
+    e = Engine(settings(take_profit=0.0), m, Store(':memory:'), [*VOTERS, rules.CONSENSUS])
+    held = lambda: {k for k, acc in e.ledger.accounts.items() if 'AUSDT' in acc.positions}  # noqa: E731
+    tick(e, m, 0)
+    assert held() == {'a', 'b'}                          # members open their own orders at once
+    tick(e, m, 2)
+    assert held() == {'a', 'b', 'c', 'consensus3'}       # c joins -> 3/5 -> the consensus account opens too

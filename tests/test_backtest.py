@@ -19,8 +19,8 @@ def frame(n=600, seed=1):
     return pd.DataFrame(dict(open=open_, high=high, low=low, close=close, volume=vol), index=idx)
 
 
-def test_single_consensus_rule():
-    assert [s.key for s in STRATEGIES] == ['consensus3']
+def test_top5_plus_consensus_rule():
+    assert [s.key for s in STRATEGIES] == ['ema_pullback', 'williams', 'adx', 'rr_2to1', 'confluence', 'consensus3']
 
 
 def test_buy_and_hold_matches_closed_form():
