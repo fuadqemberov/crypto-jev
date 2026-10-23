@@ -14,23 +14,23 @@ CREATE TABLE IF NOT EXISTS positions (
     key TEXT NOT NULL, symbol TEXT NOT NULL, side INTEGER NOT NULL, leverage INTEGER NOT NULL,
     qty REAL NOT NULL, entry_price REAL NOT NULL, fill_price REAL NOT NULL, margin REAL NOT NULL,
     fee REAL NOT NULL, funding REAL NOT NULL, opened_at INTEGER NOT NULL, stop_price REAL NOT NULL DEFAULT 0,
-    tp_price REAL NOT NULL DEFAULT 0,
+    tp_price REAL NOT NULL DEFAULT 0, voters TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (key, symbol));
 CREATE TABLE IF NOT EXISTS trades (
     id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, symbol TEXT NOT NULL, side INTEGER NOT NULL,
     leverage INTEGER NOT NULL, qty REAL NOT NULL, entry_price REAL NOT NULL, exit_price REAL NOT NULL,
     margin REAL NOT NULL, notional REAL NOT NULL, proceeds REAL NOT NULL, pnl REAL NOT NULL, ret REAL NOT NULL,
     fees REAL NOT NULL, funding REAL NOT NULL, opened_at INTEGER NOT NULL, closed_at INTEGER NOT NULL,
-    reason TEXT NOT NULL);
+    reason TEXT NOT NULL, voters TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS trades_key ON trades (key, closed_at);
 CREATE TABLE IF NOT EXISTS equity (
     key TEXT NOT NULL, ts INTEGER NOT NULL, equity REAL NOT NULL, PRIMARY KEY (key, ts));
 """
 
 POSITION_COLUMNS = ('symbol', 'side', 'leverage', 'qty', 'entry_price', 'fill_price', 'margin', 'fee', 'funding', 'opened_at',
-                    'stop_price', 'tp_price')
+                    'stop_price', 'tp_price', 'voters')
 TRADE_COLUMNS = ('symbol', 'side', 'leverage', 'qty', 'entry_price', 'exit_price', 'margin', 'notional', 'proceeds',
-                 'pnl', 'ret', 'fees', 'funding', 'opened_at', 'closed_at', 'reason')
+                 'pnl', 'ret', 'fees', 'funding', 'opened_at', 'closed_at', 'reason', 'voters')
 
 
 class Store:
@@ -47,6 +47,10 @@ class Store:
         for col in ('stop_price', 'tp_price'):            # databases created before stop-loss / R take-profit
             if col not in cols:
                 self.db.execute(f'ALTER TABLE positions ADD COLUMN {col} REAL NOT NULL DEFAULT 0')
+        # which consensus members agreed on the order (databases created before this get an empty column)
+        for table in ('positions', 'trades'):
+            if 'voters' not in {r['name'] for r in self.db.execute(f'PRAGMA table_info({table})')}:
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN voters TEXT NOT NULL DEFAULT ''")
         self.db.commit()
 
     def close(self) -> None:

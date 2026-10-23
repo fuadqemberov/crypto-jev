@@ -34,6 +34,9 @@ def main() -> str:
     def table(rows, cols):
         f = io.StringIO(); w = csv.writer(f); w.writerow(cols); w.writerows(rows); return '\ufeff' + f.getvalue()   # BOM: Excel reads UTF-8 (ə, ı, ş)
     side = {1: 'LONG', -1: 'SHORT'}
+
+    def voters(row):
+        return (row['voters'] or '').replace(',', ' + ') if 'voters' in row.keys() else ''
     summary = []
     with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
         z.write(snap, 'futures.db')
@@ -42,14 +45,14 @@ def main() -> str:
             tr = db.execute('SELECT * FROM trades WHERE key=? ORDER BY closed_at', (k,)).fetchall()
             z.writestr(f'strategiyalar/{k}/emeliyyatlar.csv', table(
                 [[utc(t['opened_at']), utc(t['closed_at']), t['symbol'], side[t['side']], t['leverage'], t['entry_price'], t['exit_price'],
-                  round(t['margin'], 4), round(t['pnl'], 4), round(t['ret'] * 100, 2), round(t['fees'], 4), round(t['funding'], 4), t['reason']] for t in tr],
-                ['acilis_utc', 'baglanis_utc', 'coin', 'istiqamet', 'leverage', 'giris', 'cixis', 'marja', 'pnl_usdt', 'pnl_marja_%', 'komissiya', 'funding', 'sebeb']))
+                  round(t['margin'], 4), round(t['pnl'], 4), round(t['ret'] * 100, 2), round(t['fees'], 4), round(t['funding'], 4), t['reason'], voters(t)] for t in tr],
+                ['acilis_utc', 'baglanis_utc', 'coin', 'istiqamet', 'leverage', 'giris', 'cixis', 'marja', 'pnl_usdt', 'pnl_marja_%', 'komissiya', 'funding', 'sebeb', 'razilasanlar']))
             eq = db.execute('SELECT ts, equity FROM equity WHERE key=? ORDER BY ts', (k,)).fetchall()
             z.writestr(f'strategiyalar/{k}/balans.csv', table([[utc(r['ts']), round(r['equity'], 2)] for r in eq], ['vaxt_utc', 'balans']))
             pos = db.execute('SELECT * FROM positions WHERE key=?', (k,)).fetchall()
             z.writestr(f'strategiyalar/{k}/aciq_movqeler.csv', table(
-                [[utc(p['opened_at']), p['symbol'], side[p['side']], p['leverage'], p['entry_price'], round(p['margin'], 4), p['stop_price'], p['tp_price']] for p in pos],
-                ['acilis_utc', 'coin', 'istiqamet', 'leverage', 'giris', 'marja', 'stop', 'tp']))
+                [[utc(p['opened_at']), p['symbol'], side[p['side']], p['leverage'], p['entry_price'], round(p['margin'], 4), p['stop_price'], p['tp_price'], voters(p)] for p in pos],
+                ['acilis_utc', 'coin', 'istiqamet', 'leverage', 'giris', 'marja', 'stop', 'tp', 'razilasanlar']))
             pnl = [t['pnl'] for t in tr]
             win, loss = sum(x for x in pnl if x > 0), -sum(x for x in pnl if x < 0)
             last = eq[-1]['equity'] if eq else a['capital']

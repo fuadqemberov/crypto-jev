@@ -686,3 +686,45 @@ def test_members_trade_alone_and_consensus_waits_for_three(monkeypatch):
     assert held() == {'a', 'b'}                          # members open their own orders at once
     tick(e, m, 2)
     assert held() == {'a', 'b', 'c', 'consensus3'}       # c joins -> 3/5 -> the consensus account opens too
+
+
+def test_consensus_order_remembers_which_three_agreed(monkeypatch, tmp_path):
+    import sqlite3
+    import zipfile
+    from app import export
+    from backtest import strategies as rules
+    monkeypatch.setattr(rules, 'MEMBERS', VOTERS)
+    db = tmp_path / 'v.db'
+    m = ScriptedMarket({'AUSDT': [101, 101, 103, 103]}, {'AUSDT': 1})
+    e = Engine(settings(take_profit=0.0), m, Store(db), [*VOTERS, rules.CONSENSUS])
+    tick(e, m, 0)
+    tick(e, m, 2)
+    pos = e.ledger.accounts['consensus3'].positions['AUSDT']
+    assert pos.voters == 'a,b,c'
+    assert e.ledger.accounts['a'].positions['AUSDT'].voters == ''           # single-rule accounts: empty
+    assert e.detail('consensus3')['positions'][0]['voters'] == 'a,b,c'
+    assert e.detail('consensus3')['signals']['entries'][0]['voters'] == 'a,b,c'
+    reloaded = Ledger(e.settings, Store(db), list(e.by_key), T0).accounts['consensus3'].positions['AUSDT']
+    assert reloaded.voters == 'a,b,c'                                       # survives a restart
+    m.live['AUSDT'] = pos.stop_price - 1e-6
+    m.offset = 10 * 60_000
+    tick(e, m)
+    t = e.store.trades('consensus3')[0]
+    assert t['reason'] == 'stop_loss' and t['voters'] == 'a,b,c'
+    monkeypatch.setenv('DB', str(db))
+    monkeypatch.setenv('HOME', str(tmp_path))
+    with zipfile.ZipFile(export.main()) as z:
+        csv_text = z.read('strategiyalar/consensus3/emeliyyatlar.csv').decode('utf-8-sig')
+    assert 'razilasanlar' in csv_text and 'a + b + c' in csv_text
+    old = tmp_path / 'old.db'                                               # a database from before this column
+    con = sqlite3.connect(old)
+    con.executescript('CREATE TABLE positions (key TEXT, symbol TEXT, side INTEGER, leverage INTEGER, qty REAL, '
+                      'entry_price REAL, fill_price REAL, margin REAL, fee REAL, funding REAL, opened_at INTEGER, '
+                      'PRIMARY KEY (key, symbol));'
+                      'CREATE TABLE trades (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT, symbol TEXT, side INTEGER, '
+                      'leverage INTEGER, qty REAL, entry_price REAL, exit_price REAL, margin REAL, notional REAL, proceeds REAL, '
+                      'pnl REAL, ret REAL, fees REAL, funding REAL, opened_at INTEGER, closed_at INTEGER, reason TEXT);')
+    con.close()
+    s = Store(old)
+    for table in ('positions', 'trades'):
+        assert 'voters' in {r['name'] for r in s.db.execute(f'PRAGMA table_info({table})')}

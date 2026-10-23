@@ -6,6 +6,8 @@
 > bir order açır; 2-dən az strategiya razı qalanda, stop-loss və ya 1.5R TP-də bağlanır. Beləliklə konsensusun tək
 > strategiyalardan yaxşı olub-olmadığını eyni bazarda birbaşa müqayisə etmək olur.
 > Dashboard-da son şamın razılaşmaları görünür (məs. `SOLUSDT SHORT 3/5 · ema_pullback, williams, adx`).
+> Hər konsensus order-i açılanda **hansı strategiyaların razılaşdığı** yadda saxlanır: dashboard-da açıq mövqelər və
+> tarixçədə „Kim razılaşdı“ sütunu, `app.export` zip-ində `razilasanlar` sütunu (məs. `ema_pullback + williams + adx`).
 > Qalan 21 strategiya `master`-dədir.
 
 

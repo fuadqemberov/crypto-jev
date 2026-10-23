@@ -241,9 +241,10 @@ class Engine:
                     continue
                 lev = leverage(s.key, sig.atr_pct, self.settings.max_leverage, self.settings.risk_per_move)
                 px = self._price(symbol, data)
-                pos = self.ledger.open(s.key, symbol, sig.cur, lev, px, ts, stop_distance(s.key, sig.atr_pct, px))
+                voters = ','.join(votes.get((symbol, sig.cur), [])) if s.key == rules.CONSENSUS.key else ''
+                pos = self.ledger.open(s.key, symbol, sig.cur, lev, px, ts, stop_distance(s.key, sig.atr_pct, px), voters)
                 if pos:
-                    entries.append({'symbol': symbol, 'side': SIDE[sig.cur], 'leverage': lev})
+                    entries.append({'symbol': symbol, 'side': SIDE[sig.cur], 'leverage': lev, **({'voters': voters} if voters else {})})
                     self._event(ts, s, 'OPEN', pos, pos.entry_price)
                 else:
                     skipped.append({'symbol': symbol, 'side': SIDE[sig.cur], 'leverage': lev})
@@ -393,7 +394,7 @@ class Engine:
                               'notional': p.qty * self.ledger.mark(p), 'liq_price': self.ledger.liquidation_price(p),
                               'stop_price': p.stop_price or None, 'tp_price': p.tp_price or None,
                               'pnl': pnl, 'ret_pct': pnl / p.initial_margin * 100, 'funding': p.funding,
-                              'opened_at': p.opened_at})
+                              'opened_at': p.opened_at, 'voters': p.voters})
         positions.sort(key=lambda p: p['opened_at'], reverse=True)
         ranked = sorted((self._summary(k, stats) for k in self.by_key), key=lambda r: r['equity'], reverse=True)
         rank = {r['key']: i for i, r in enumerate(ranked, 1)}

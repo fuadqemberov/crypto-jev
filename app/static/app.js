@@ -289,21 +289,24 @@ function renderDetail(d) {
     <h3>SHORT rejimində (${(sig.short || []).length})</h3>${active(sig.short, 'SHORT')}`;
 
   const tp = d.status.take_profit;
+  const names = Object.fromEntries((d.status.voters || []).map((v) => [v.key, v.name.replace(/\s*[(+—].*$/, '')]));
+  const cons = d.summary.key === 'consensus3';
+  const who = (v) => v ? `<span class="voters">${v.split(',').map((k) => esc(names[k] || k)).join(' · ')}</span>` : '—';
   $('s-pos-note').textContent = `${d.positions.length} paralel mövqe (limit yoxdur, yalnız sərbəst marja)`;
-  $('s-positions').innerHTML = '<thead><tr><th>Coin</th><th class="l">İstiqamət</th><th>Lev.</th><th>Açılış</th><th>Giriş</th><th>Mark</th><th>Stop</th><th>Likv. qiyməti</th><th>Marja</th><th>Nominal</th><th>Funding</th><th>Xalis PnL</th><th>% marja</th><th>TP</th></tr></thead><tbody>' +
+  $('s-positions').innerHTML = '<thead><tr><th>Coin</th><th class="l">İstiqamət</th><th>Lev.</th><th>Açılış</th><th>Giriş</th><th>Mark</th><th>Stop</th><th>Likv. qiyməti</th><th>Marja</th><th>Nominal</th><th>Funding</th><th>Xalis PnL</th><th>% marja</th><th>TP</th>' + (cons ? '<th class="l">Kim razılaşdı</th>' : '') + '</tr></thead><tbody>' +
     (d.positions.length ? d.positions.map((p) => `<tr><td><b>${esc(p.symbol)}</b></td><td class="l">${sideTag(p.side)}</td><td>${p.leverage}×</td><td>${when(p.opened_at)}</td>
       <td>${price(p.entry_price)}</td><td>${price(p.price)}</td><td>${p.stop_price ? price(p.stop_price) : '—'}</td><td class="muted">${price(p.liq_price)}</td><td>${money(p.margin)}</td><td>${money(p.notional)}</td>
       <td class="${cls(-p.funding)}">${money(-p.funding, true)}</td><td class="${cls(p.pnl)}">${money(p.pnl, true)}</td><td class="${cls(p.ret_pct)}">${pct(p.ret_pct)}</td>
-      <td>${p.tp_price ? price(p.tp_price) : (tp > 0 ? money(Math.max(0, tp - p.pnl)) + ' qalıb' : '—')}</td></tr>`).join('')
-      : '<tr><td colspan="14" class="empty">Açıq mövqe yoxdur</td></tr>') + '</tbody>';
+      <td>${p.tp_price ? price(p.tp_price) : (tp > 0 ? money(Math.max(0, tp - p.pnl)) + ' qalıb' : '—')}</td>${cons ? `<td class="l">${who(p.voters)}</td>` : ''}</tr>`).join('')
+      : '<tr><td colspan="15" class="empty">Açıq mövqe yoxdur</td></tr>') + '</tbody>';
   document.querySelectorAll('#s-positions .meter-bar').forEach((el) => { el.style.width = el.dataset.w + '%'; });
 
   $('s-trades-note').textContent = `son ${d.trades.length} əməliyyat`;
-  $('s-trades').innerHTML = '<thead><tr><th>Coin</th><th class="l">İstiqamət</th><th>Lev.</th><th>Açılış</th><th>Bağlanış</th><th>Müddət</th><th>Giriş</th><th>Çıxış</th><th>Marja</th><th>Nəticə</th><th>% marja</th><th>Komissiya</th><th>Funding</th><th class="l">Səbəb</th></tr></thead><tbody>' +
+  $('s-trades').innerHTML = '<thead><tr><th>Coin</th><th class="l">İstiqamət</th><th>Lev.</th><th>Açılış</th><th>Bağlanış</th><th>Müddət</th><th>Giriş</th><th>Çıxış</th><th>Marja</th><th>Nəticə</th><th>% marja</th><th>Komissiya</th><th>Funding</th><th class="l">Səbəb</th>' + (cons ? '<th class="l">Kim razılaşdı</th>' : '') + '</tr></thead><tbody>' +
     (d.trades.length ? d.trades.map((t) => `<tr><td><b>${esc(t.symbol)}</b></td><td class="l">${sideTag(t.side)}</td><td>${t.leverage}×</td><td>${when(t.opened_at)}</td><td>${when(t.closed_at)}</td><td>${duration(t.closed_at - t.opened_at)}</td>
       <td>${price(t.entry_price)}</td><td>${price(t.exit_price)}</td><td>${money(t.margin)}</td><td class="${cls(t.pnl)}">${money(t.pnl, true)}</td><td class="${cls(t.ret)}">${pct(t.ret * 100)}</td>
-      <td>${money(t.fees)}</td><td class="${cls(-t.funding)}">${money(-t.funding, true)}</td><td class="l">${reasonTag(t.reason)}</td></tr>`).join('')
-      : '<tr><td colspan="14" class="empty">Hələ bağlanmış əməliyyat yoxdur</td></tr>') + '</tbody>';
+      <td>${money(t.fees)}</td><td class="${cls(-t.funding)}">${money(-t.funding, true)}</td><td class="l">${reasonTag(t.reason)}</td>${cons ? `<td class="l">${who(t.voters)}</td>` : ''}</tr>`).join('')
+      : '<tr><td colspan="15" class="empty">Hələ bağlanmış əməliyyat yoxdur</td></tr>') + '</tbody>';
 }
 
 /* ---------- refresh loop ---------- */

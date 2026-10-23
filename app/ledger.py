@@ -41,6 +41,7 @@ class Position:
     opened_at: int
     stop_price: float = 0.0   # 0 = no stop
     tp_price: float = 0.0     # 0 = no R-based take-profit
+    voters: str = ''          # consensus orders: the members that agreed, comma separated
 
     @property
     def initial_margin(self) -> float:
@@ -163,7 +164,7 @@ class Ledger:
         return margin if margin >= self.settings.min_margin else 0.0
 
     def open(self, key: str, symbol: str, side: int, leverage: int, price: float, ts: int,
-             stop_distance: float | None = None) -> Position | None:
+             stop_distance: float | None = None, voters: str = '') -> Position | None:
         acc = self.accounts[key]
         if symbol in acc.positions or side not in (1, -1) or not price > 0 or leverage < 1:
             return None
@@ -175,7 +176,7 @@ class Ledger:
         fee = notional * self.settings.fee_rate
         stop = self.stop_price(side, fill, leverage, stop_distance)
         pos = Position(symbol, side, leverage, notional / fill, price, fill, margin, fee, 0.0, ts,
-                       stop, self.tp_price(side, fill, stop))
+                       stop, self.tp_price(side, fill, stop), voters)
         cash = acc.cash - margin - fee
         self.store.open_position(key, cash, asdict(pos))
         acc.cash = cash
@@ -198,7 +199,7 @@ class Ledger:
         trade = dict(symbol=symbol, side=pos.side, leverage=pos.leverage, qty=pos.qty, entry_price=pos.entry_price,
                      exit_price=price, margin=pos.initial_margin, notional=pos.notional, proceeds=proceeds,
                      pnl=proceeds - cost, ret=(proceeds - cost) / pos.initial_margin, fees=pos.fee + exit_fee,
-                     funding=pos.funding, opened_at=pos.opened_at, closed_at=ts, reason=reason)
+                     funding=pos.funding, opened_at=pos.opened_at, closed_at=ts, reason=reason, voters=pos.voters)
         cash = acc.cash + proceeds
         trade['id'] = self.store.close_position(key, cash, trade)
         acc.cash = cash
