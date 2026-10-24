@@ -1,14 +1,15 @@
 # Top 5 konsensus — `consensus-3of5` branch
 
-> **6 hesab, hər biri 2000 $.** Canlı nəticələrdə (15–20 okt. 2026) ən yaxşı 5 strategiya — **EMA geri çəkilmə + 3 qayda,
-> Williams %R, ADX trend izləmə, Sabit 2:1 R/R, Çakır Osilatör** — hər biri öz hesabında öz order-lərini açır.
-> 6-cı hesab **Konsensus 3/5**: bu 5-dən istənilən **ən azı 3-ü** eyni coin-də eyni istiqamətdə (LONG və ya SHORT) olanda
-> bir order açır; 2-dən az strategiya razı qalanda, stop-loss və ya 1.5R TP-də bağlanır. Beləliklə konsensusun tək
-> strategiyalardan yaxşı olub-olmadığını eyni bazarda birbaşa müqayisə etmək olur.
-> Dashboard-da son şamın razılaşmaları görünür (məs. `SOLUSDT SHORT 3/5 · ema_pullback, williams, adx`).
-> Hər konsensus order-i açılanda **hansı strategiyaların razılaşdığı** yadda saxlanır: dashboard-da açıq mövqelər və
-> tarixçədə „Kim razılaşdı“ sütunu, `app.export` zip-ində `razilasanlar` sütunu (məs. `ema_pullback + williams + adx`).
-> Qalan 21 strategiya `master`-dədir.
+> **5 hesab, hər biri 2000 $.** EMA geri çəkilmə + 3 qayda, Williams %R, ADX trend izləmə və Sabit 2:1 R/R hər biri öz
+> hesabında öz order-lərini açır. 5-ci hesab — **Konsensus**: yalnız **EMA geri çəkilmə və Williams %R ikisi birlikdə,
+> üstəlik Sabit 2:1 və ya ADX** eyni coin-də eyni istiqamətdə (LONG / SHORT) olanda bir order açır. Bu, 23–24 okt.
+> nəticələrində ən uğurlu iki birləşmədir (EMA+Williams+2:1: 6/7 qazanc, EMA+Williams+ADX: 3/3). Çakır Osilatör
+> iştirak etdiyi bütün birləşmələr zərərdə olduğu üçün çıxarılıb. Order 2-dən az strategiya razı qalanda, stop və ya
+> 1.5R TP-də bağlanır; hansı strategiyaların razılaşdığı order-in yanında saxlanır („Kim razılaşdı“, `razilasanlar`).
+>
+> **Başlanğıc gözləməsi:** bot (yenidən) işə düşəndən sonra `STARTUP_DELAY_SECONDS` (default 300 = 5 dəq) ərzində yeni
+> order açılmır — ilk emal olunan şam adətən köhnədir və gec giriş verirdi. Açıq mövqelərin stop / TP-si işləməyə davam edir.
+> Qalan strategiyalar `master`-dədir.
 
 
 Python 3.12+ · FastAPI · Binance USDT-M futures açıq bazar məlumatı · Azərbaycan dilində dashboard.

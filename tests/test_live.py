@@ -27,7 +27,7 @@ F, S = 0.0005, 0.0005
 
 def settings(**kw) -> Settings:
     base = dict(capital=2000.0, margin_pct=5.0, take_profit=15.0, tp_r_multiple=0.0,
-                signal_exits='all', cooldown_bars=0, max_cost_r=0.0, max_hold_hours=0.0, fee_rate=F, slippage_rate=S,
+                signal_exits='all', cooldown_bars=0, max_cost_r=0.0, max_hold_hours=0.0, startup_delay_seconds=0, fee_rate=F, slippage_rate=S,
                 maint_margin_rate=0.005, candle_delay_seconds=0)
     return Settings(**{**base, **kw})
 
@@ -121,7 +121,7 @@ def test_leverage_is_chosen_by_strategy_and_volatility_from_1x_to_100x():
     assert leverage('adx', 0.04, 100) == 2                           # floor(0.25 / 0.12)
     assert leverage('williams', 0.004, 100, 0.5) == 62               # RISK_PER_MOVE=0.5 doubles it
     assert leverage('williams', 0.0005, 100) == 100                  # very calm coin -> capped at 100x
-    assert leverage('confluence', 0.0005, 100) == 5                  # its own 5x ceiling
+    assert leverage('rr_2to1', 0.0005, 100) == 20                    # its own 20x ceiling
     assert leverage('adx', 0.5, 100) == 1                            # never below 1x
     assert leverage('williams', 0.0005, 20) == 20                    # MAX_LEVERAGE wins
     assert leverage('williams', float('nan'), 100) == 1
@@ -651,13 +651,15 @@ VOTERS = [Strategy(k, k, 'Test', '', _above(lv)) for k, lv in (('a', 100), ('b',
 def test_one_account_opens_one_order_when_three_of_five_agree(monkeypatch):
     from backtest import strategies as rules
     monkeypatch.setattr(rules, 'MEMBERS', VOTERS)
+    monkeypatch.setattr(rules, 'REQUIRED', ('a', 'b'))
+    monkeypatch.setattr(rules, 'ANY_OF', ('c', 'd'))
     m = ScriptedMarket({'AUSDT': [101, 101, 103, 103]}, {'AUSDT': 1})
     e = Engine(settings(take_profit=0.0), m, Store(':memory:'), [rules.CONSENSUS])
     assert list(e.ledger.accounts) == ['consensus3']
     acc = e.ledger.accounts['consensus3']
     tick(e, m, 0)                                       # a, b long -> 2/5: no order
     assert not acc.positions
-    assert e.detail('consensus3')['signals']['votes'][0] == {'symbol': 'AUSDT', 'side': 'LONG', 'members': ['a', 'b']}
+    assert e.detail('consensus3')['signals']['votes'][0] == {'symbol': 'AUSDT', 'side': 'LONG', 'members': ['a', 'b'], 'ok': False}
     tick(e, m, 1)
     assert not acc.positions
     tick(e, m, 2)                                       # c joins -> 3/5: one order in the single account
@@ -668,17 +670,21 @@ def test_one_account_opens_one_order_when_three_of_five_agree(monkeypatch):
     assert e.status()['consensus_min'] == 3 and len(e.status()['voters']) == 5
 
 
-def test_branch_has_top5_plus_consensus_accounts(tmp_path):
+def test_branch_has_four_strategies_plus_consensus_accounts(tmp_path):
     from backtest import strategies as rules
-    assert [s.key for s in STRATEGIES] == ['ema_pullback', 'williams', 'adx', 'rr_2to1', 'confluence', 'consensus3']
-    e = Engine(settings(), ScriptedMarket({'AUSDT': [101]}, {'AUSDT': 1}), Store(tmp_path / 'six.db'))
-    assert len(e.ledger.accounts) == 6
-    assert [m.key for m in rules.MEMBERS] == ['ema_pullback', 'williams', 'adx', 'rr_2to1', 'confluence']
+    assert [s.key for s in STRATEGIES] == ['ema_pullback', 'williams', 'adx', 'rr_2to1', 'consensus3']
+    e = Engine(settings(), ScriptedMarket({'AUSDT': [101]}, {'AUSDT': 1}), Store(tmp_path / 'five.db'))
+    assert len(e.ledger.accounts) == 5
+    assert [m.key for m in rules.MEMBERS] == ['ema_pullback', 'williams', 'adx', 'rr_2to1']
+    assert rules.consensus_ok({'ema_pullback', 'williams', 'rr_2to1'}) and rules.consensus_ok({'ema_pullback', 'williams', 'adx'})
+    assert not rules.consensus_ok({'ema_pullback', 'adx', 'rr_2to1'}) and not rules.consensus_ok({'ema_pullback', 'williams'})
 
 
 def test_members_trade_alone_and_consensus_waits_for_three(monkeypatch):
     from backtest import strategies as rules
     monkeypatch.setattr(rules, 'MEMBERS', VOTERS)
+    monkeypatch.setattr(rules, 'REQUIRED', ('a', 'b'))
+    monkeypatch.setattr(rules, 'ANY_OF', ('c', 'd'))
     m = ScriptedMarket({'AUSDT': [101, 101, 103]}, {'AUSDT': 1})
     e = Engine(settings(take_profit=0.0), m, Store(':memory:'), [*VOTERS, rules.CONSENSUS])
     held = lambda: {k for k, acc in e.ledger.accounts.items() if 'AUSDT' in acc.positions}  # noqa: E731
@@ -694,6 +700,8 @@ def test_consensus_order_remembers_which_three_agreed(monkeypatch, tmp_path):
     from app import export
     from backtest import strategies as rules
     monkeypatch.setattr(rules, 'MEMBERS', VOTERS)
+    monkeypatch.setattr(rules, 'REQUIRED', ('a', 'b'))
+    monkeypatch.setattr(rules, 'ANY_OF', ('c', 'd'))
     db = tmp_path / 'v.db'
     m = ScriptedMarket({'AUSDT': [101, 101, 103, 103]}, {'AUSDT': 1})
     e = Engine(settings(take_profit=0.0), m, Store(db), [*VOTERS, rules.CONSENSUS])
@@ -728,3 +736,33 @@ def test_consensus_order_remembers_which_three_agreed(monkeypatch, tmp_path):
     s = Store(old)
     for table in ('positions', 'trades'):
         assert 'voters' in {r['name'] for r in s.db.execute(f'PRAGMA table_info({table})')}
+
+
+def test_consensus_needs_both_required_members(monkeypatch):
+    from backtest import strategies as rules
+    monkeypatch.setattr(rules, 'MEMBERS', VOTERS)
+    monkeypatch.setattr(rules, 'REQUIRED', ('a', 'c'))       # c only joins on the 3rd bar
+    monkeypatch.setattr(rules, 'ANY_OF', ('d', 'e'))         # d, e never agree here
+    m = ScriptedMarket({'AUSDT': [101, 101, 103]}, {'AUSDT': 1})
+    e = Engine(settings(take_profit=0.0), m, Store(':memory:'), [*VOTERS, rules.CONSENSUS])
+    tick(e, m, 0)
+    tick(e, m, 2)                                        # 3 votes (a, b, c) but no ANY_OF member -> no order
+    assert not e.ledger.accounts['consensus3'].positions
+
+
+def test_no_new_orders_during_startup_warmup_but_exits_work():
+    m = ScriptedMarket({'AUSDT': [101, 101, 96, 101]}, {'AUSDT': 1})
+    e = Engine(settings(take_profit=0.0, startup_delay_seconds=300), m, Store(':memory:'), [DIR])
+    tick(e, m, 0)                                       # first candle right after start -> blocked
+    assert not e.ledger.accounts['dir'].positions
+    assert e.detail('dir')['signals']['filtered'][0]['why'] == 'startup'
+    assert e.status()['warmup_until'] is not None
+    m.offset = 6 * 60_000                               # 6 minutes later, same candle: still no stale entry
+    tick(e, m)
+    assert not e.ledger.accounts['dir'].positions and e.status()['warmup_until'] is None
+    tick(e, m, 1)                                       # next candle: AUSDT long is not fresh any more
+    assert not e.ledger.accounts['dir'].positions
+    tick(e, m, 2)
+    tick(e, m, 3)                                       # fresh long after the warm-up -> opens normally
+    assert 'AUSDT' in e.ledger.accounts['dir'].positions
+    assert Settings().startup_delay_seconds == 300

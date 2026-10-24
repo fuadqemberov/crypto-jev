@@ -1,7 +1,7 @@
-"""Consensus branch: the live top 5 (15–20 Oct 2026) plus a 3-of-5 consensus — 6 accounts.
+"""Consensus branch: four strategies plus a consensus account — 5 accounts.
 
-Each of the five MEMBERS trades its own account with its own orders. The sixth account, ``consensus3``,
-opens one order when at least CONSENSUS_MIN (3) of the five hold the same direction on the same coin. Each rule maps an OHLCV frame to a 0/1 position array decided on the bar
+Each MEMBER (EMA geri çəkilmə, Williams %R, ADX, Sabit 2:1) trades its own account. The consensus account
+opens one order when EMA geri çəkilmə and Williams %R agree together with 2:1 or ADX (see consensus_ok). Each rule maps an OHLCV frame to a 0/1 position array decided on the bar
 CLOSE; the engine acts at the next bar, so no future data is used. The other 21 rules live on master.
 """
 from __future__ import annotations
@@ -113,20 +113,6 @@ def s_ema_pullback(df, reward=2.0):
     return pos
 
 
-def s_confluence(df):
-    """"Çakır Osilatör" bot video: all five filters must agree (confidence 100) — price > MA50 > MA200,
-    Supertrend up, ADX > 20, RSI 50–70, MACD histogram > 0 — and the entry waits for a pull-back to
-    MA60 on the 1h chart (low touches MA60, close stays above). Exit when Supertrend turns down or
-    the close falls under MA60."""
-    m50, m60, m200 = ind.sma(df.close, 50), ind.sma(df.close, 60), ind.sma(df.close, 200)
-    st = pd.Series(ind.supertrend(df, 10, 3.0), index=df.index)
-    a, _, _ = ind.adx(df)
-    r = ind.rsi(df.close, 14)
-    _, _, h = ind.macd(df.close)
-    score = (df.close > m50) & (m50 > m200) & (st == 1) & (a > 20) & (r > 50) & (r < 70) & (h > 0)
-    entry = score & (df.low <= m60 * 1.003) & (df.close > m60)
-    return state(entry, (st == -1) | (df.close < m60))
-
 
 MEMBERS: list[Strategy] = [
     Strategy('ema_pullback', 'EMA geri çəkilmə + 3 qayda', 'Trend',
@@ -140,30 +126,40 @@ MEMBERS: list[Strategy] = [
              'EMA20 > EMA50 və qiymət Bollinger orta xəttini yuxarı kəsəndə alış. Stop girişdən −0.5%, hədəf +1% '
              '(20×-də marjanın −10% / +20%-i). Videodakı BTC istiqamət filtri tək coin məlumatında olmadığı üçün tətbiq edilmir.',
              s_rr_2to1),
-    Strategy('confluence', 'Çakır Osilatör — 5 indikator təsdiqi + MA60', 'Trend',
-             'Bütün şərtlər eyni vaxtda (güven xalı 100): qiymət > MA50 > MA200, Supertrend yuxarı, ADX > 20, RSI 50–70, MACD histoqramı > 0. '
-             'Giriş MA60-a geri çəkilmədə (şamın dibi MA60-a toxunur, bağlanış üstündə). Supertrend aşağı dönəndə və ya MA60 altında çıxış.',
-             s_confluence),
 ]
+# Results 23–24 Oct 2026 by agreeing set: EMA + Williams + 2:1 (6/7 wins) and EMA + Williams + ADX
+# (3/3) were the winners; every set with Çakır Osilatör lost, so it was removed. The consensus order
+# now needs both REQUIRED members plus at least one of ANY_OF (>= 3 votes in total).
+REQUIRED = ('ema_pullback', 'williams')
+ANY_OF = ('rr_2to1', 'adx')
 CONSENSUS_MIN = 3
 
 
+def consensus_ok(keys) -> bool:
+    keys = set(keys)
+    return set(REQUIRED) <= keys and bool(keys & set(ANY_OF)) and len(keys) >= CONSENSUS_MIN
+
+
 def member_votes(df) -> np.ndarray:
-    """Per bar: how many of the five members hold a long on this frame (on the mirrored frame: a short)."""
+    """Per bar: how many members hold a long on this frame (on the mirrored frame: a short)."""
     return np.sum([np.nan_to_num(np.asarray(m.fn(df), dtype=float)) > 0.5 for m in MEMBERS], axis=0)
 
 
 def s_consensus(df):
-    """Long while at least CONSENSUS_MIN of the five members are long on this coin (any three); the
-    position ends when fewer than two still agree, or at stop / TP. The futures layer applies the same
-    rule to the mirrored series, which gives the short side: >= 3 members short."""
-    votes = pd.Series(member_votes(df), index=df.index)
-    return state(votes >= CONSENSUS_MIN, votes <= 1)
+    """Long when EMA geri çəkilmə AND Williams %R are long on this coin together with 2:1 or ADX; the
+    position ends when fewer than two members still agree, or at stop / TP. The futures layer applies
+    the same rule to the mirrored series, which gives the short side."""
+    held = {m.key: np.nan_to_num(np.asarray(m.fn(df), dtype=float)) > 0.5 for m in MEMBERS}
+    none = np.zeros(len(df), dtype=bool)
+    req = np.logical_and.reduce([held.get(k, none) for k in REQUIRED])
+    any_ = np.logical_or.reduce([held.get(k, none) for k in ANY_OF])
+    votes = pd.Series(np.sum(list(held.values()), axis=0), index=df.index)
+    return state(pd.Series(req & any_, index=df.index) & (votes >= CONSENSUS_MIN), votes <= 1)
 
 
 CONSENSUS = Strategy(
-    'consensus3', 'Konsensus 3/5 (top 5-dən ən azı 3-ü)', 'Konsensus',
-    'Analiz: EMA geri çəkilmə, Williams %R, ADX, Sabit 2:1 və Çakır Osilatör. İstənilən ən azı 3-ü eyni coin-də eyni '
-    'istiqamətdə (LONG və ya SHORT) olanda bir order açılır; 2-dən az strategiya razı qalanda, stop və ya TP-də bağlanır.',
+    'consensus3', 'Konsensus: EMA + Williams + (2:1 və ya ADX)', 'Konsensus',
+    'EMA geri çəkilmə və Williams %R ikisi birlikdə, üstəlik Sabit 2:1 və ya ADX eyni coin-də eyni istiqamətdə (LONG və ya SHORT) '
+    'olanda bir order açılır (ən uğurlu iki birləşmə). 2-dən az strategiya razı qalanda, stop və ya TP-də bağlanır.',
     s_consensus)
-STRATEGIES: list[Strategy] = [*MEMBERS, CONSENSUS]   # 6 accounts: the five trade alone + the consensus
+STRATEGIES: list[Strategy] = [*MEMBERS, CONSENSUS]   # 5 accounts: four trade alone + the consensus

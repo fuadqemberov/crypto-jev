@@ -35,7 +35,6 @@ RISK_PER_TYPICAL_MOVE = 0.25   # default of RISK_PER_MOVE
 # key -> (expected adverse move in ATR multiples, leverage ceiling)
 LEVERAGE_PROFILE: dict[str, tuple[float, int]] = {
     'ema_pullback': (2.5, 25), 'williams': (2.0, 100), 'adx': (3.0, 100), 'rr_2to1': (2.0, 20),
-    'confluence': (3.0, 5),
     'consensus3': (2.5, 25),   # ATR multiple / ceiling of its strongest member (EMA geri çəkilmə)
 }
 DEFAULT_PROFILE = (3.0, 100)

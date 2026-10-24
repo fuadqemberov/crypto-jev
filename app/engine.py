@@ -1,4 +1,4 @@
-"""Live paper-trading engine: the top 5 strategies + a 3-of-5 consensus, 6 independent virtual USDT-M futures wallets.
+"""Live paper-trading engine: four strategies + an EMA/Williams consensus, 5 independent virtual USDT-M futures wallets.
 
 Every ``PRICE_REFRESH_SECONDS`` mark prices and funding are refreshed and, for every account:
 funding is settled when a funding time passes, positions hitting maintenance margin are
@@ -69,6 +69,8 @@ class Engine:
         self.entries_paused: bool = bool(pause.get('paused'))
         self.paused_at: int | None = pause.get('at')
         self.last_close: dict[tuple[str, str], int] = store.last_closes()   # cooldown bookkeeping
+        # warm-up: no new orders right after a (re)start — the first candle processed is usually old
+        self.warmup_until = market.now_ms() + settings.startup_delay_seconds * 1000
         self.prices: dict[str, float] = {}
         self.funding: dict[str, tuple[int, float]] = {}      # symbol -> (next settlement ms, rate)
         self.last_price_at: int | None = None
@@ -209,7 +211,7 @@ class Engine:
             for symbol, sig in sigs.items():
                 if sig.cur and symbol in in_universe:
                     votes.setdefault((symbol, sig.cur), []).append(key)
-        agree = sorted(({'symbol': sym, 'side': SIDE[d], 'members': keys} for (sym, d), keys in votes.items()
+        agree = sorted(({'symbol': sym, 'side': SIDE[d], 'members': keys, 'ok': rules.consensus_ok(keys)} for (sym, d), keys in votes.items()
                         if len(keys) >= 2), key=lambda x: -len(x['members']))
         for s in self.strategies:
             st: dict[str, Signal] = states[s.key]
@@ -228,6 +230,9 @@ class Engine:
                     continue
                 if sig.prev == sig.cur:
                     continue
+                if ts < self.warmup_until:                # just (re)started: stale candle, wait
+                    filtered.append({'symbol': symbol, 'side': SIDE[sig.cur], 'why': 'startup'})
+                    continue
                 if self.entries_paused:                   # new entries stopped; open positions keep running
                     paused.append({'symbol': symbol, 'side': SIDE[sig.cur]})
                     continue
@@ -242,6 +247,10 @@ class Engine:
                 lev = leverage(s.key, sig.atr_pct, self.settings.max_leverage, self.settings.risk_per_move)
                 px = self._price(symbol, data)
                 voters = ','.join(votes.get((symbol, sig.cur), [])) if s.key == rules.CONSENSUS.key else ''
+                if s.key == rules.CONSENSUS.key and not rules.consensus_ok(votes.get((symbol, sig.cur), [])):
+                    # e.g. a long/short overlap ending: the remaining side may have too few / the wrong voters
+                    filtered.append({'symbol': symbol, 'side': SIDE[sig.cur], 'why': 'consensus'})
+                    continue
                 pos = self.ledger.open(s.key, symbol, sig.cur, lev, px, ts, stop_distance(s.key, sig.atr_pct, px), voters)
                 if pos:
                     entries.append({'symbol': symbol, 'side': SIDE[sig.cur], 'leverage': lev, **({'voters': voters} if voters else {})})
@@ -356,12 +365,13 @@ class Engine:
             'stop_loss_pct': self.settings.stop_loss_pct, 'tp_r_multiple': self.settings.tp_r_multiple,
             'risk_per_move': self.settings.risk_per_move, 'max_cost_r': self.settings.max_cost_r,
             'signal_exits': self.settings.signal_exits, 'cooldown_bars': self.settings.cooldown_bars,
-            'max_hold_hours': self.settings.max_hold_hours, 'consensus_min': rules.CONSENSUS_MIN,
+            'max_hold_hours': self.settings.max_hold_hours, 'consensus_min': rules.CONSENSUS_MIN, 'consensus_required': list(rules.REQUIRED), 'consensus_any': list(rules.ANY_OF),
             'voters': [{'key': m.key, 'name': m.name} for m in rules.MEMBERS],
             'max_leverage': self.settings.max_leverage,
             'fee_pct': self.settings.fee_rate * 100, 'slippage_pct': self.settings.slippage_rate * 100,
             'candle_seconds': self.candle_seconds, 'error': self.last_error,
             'entries_paused': self.entries_paused, 'paused_at': self.paused_at,
+            'warmup_until': self.warmup_until if now < self.warmup_until else None,
             'open_positions': sum(len(a.positions) for a in self.ledger.accounts.values()),
         }
 

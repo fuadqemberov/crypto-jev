@@ -83,8 +83,9 @@ function renderPause(st) {
   btn.classList.toggle('paused', !!st.entries_paused);
   btn.textContent = st.entries_paused ? '▶ Yeni siqnallara icazə ver' : '⏸ Yeni siqnalları dayandır';
   btn.title = st.entries_paused ? 'Strategiyalar yenidən yeni mövqe aça bilər' : 'Açıq mövqelər stop / TP / siqnalla bağlanana qədər davam edir, yeni mövqe açılmır';
-  const cons = st.consensus_min ? `◆ 6 hesab: top 5 strategiyanın hər biri öz order-lərini açır; „Konsensus 3/5“ hesabı isə yalnız ən azı ${st.consensus_min}-ü eyni coin-də eyni istiqamətdə razı olanda order açır.` : '';
-  $('paused-banner').textContent = (cons ? cons + (st.entries_paused ? '  ' : '') : '') + (st.entries_paused
+  const cons = st.consensus_min ? `◆ 5 hesab: EMA geri çəkilmə, Williams %R, ADX və Sabit 2:1 hər biri öz order-lərini açır; Konsensus hesabı yalnız EMA + Williams birlikdə, üstəlik 2:1 və ya ADX eyni istiqamətdə olanda order açır.` : '';
+  const warm = st.warmup_until ? `⏳ Bot yenicə başladı: ${Math.ceil((st.warmup_until - st.now) / 60000)} dəq ərzində yeni order açılmır (köhnə şamın siqnalları ilə gec giriş olmasın).  ` : '';
+  $('paused-banner').textContent = warm + (cons ? cons + (st.entries_paused ? '  ' : '') : '') + (st.entries_paused
     ? `⏸ Yeni siqnallar dayandırılıb (${when(st.paused_at)}) — yeni mövqe açılmır. ${st.open_positions} açıq mövqe stop / TP / siqnalla bağlanana qədər davam edir.`
     : '');
 }
@@ -283,8 +284,8 @@ function renderDetail(d) {
     <h3>Siqnalla bağlandı / çevrildi</h3>${orders(sig.exits)}
     <h3>Sərbəst marja çatmadığı üçün buraxıldı</h3>${orders(sig.skipped, 'skip')}
     ${(sig.paused || []).length ? `<h3>Yeni siqnallar dayandırıldığı üçün açılmadı (${sig.paused.length})</h3>${orders(sig.paused, 'skip')}` : ''}
-    ${sig.votes ? `<h3>Top 5 razılaşması — son şam (≥2 strategiya; ${d.status.consensus_min}+ olanda giriş)</h3>${sig.votes.length ? `<div class="chips">${sig.votes.map((v) => `<span class="chip ${v.side === 'LONG' ? 'buy' : 'sell'}${v.members.length >= d.status.consensus_min ? ' held' : ''}">${esc(v.symbol)} ${esc(v.side)} ${v.members.length}/5 · ${esc(v.members.join(', '))}</span>`).join('')}</div>` : none}` : ''}
-    ${(sig.filtered || []).length ? `<h3>Filtr: komissiya riskə görə çox və ya gözləmə müddəti (${sig.filtered.length})</h3>${orders(sig.filtered.map((x) => ({ ...x, symbol: x.symbol + (x.why === 'fee' ? ' · komissiya ' + Math.round(x.cost_r * 100) + '%R' : x.why === 'consensus' ? '' : ' · gözləmə') })), 'skip')}` : ''}
+    ${sig.votes ? `<h3>Razılaşma — son şam (sarı: EMA + Williams + 2:1/ADX → giriş)</h3>${sig.votes.length ? `<div class="chips">${sig.votes.map((v) => `<span class="chip ${v.side === 'LONG' ? 'buy' : 'sell'}${v.ok ? ' held' : ''}">${esc(v.symbol)} ${esc(v.side)} ${v.members.length}/${(d.status.voters || []).length} · ${esc(v.members.join(', '))}</span>`).join('')}</div>` : none}` : ''}
+    ${(sig.filtered || []).length ? `<h3>Filtr: komissiya riskə görə çox və ya gözləmə müddəti (${sig.filtered.length})</h3>${orders(sig.filtered.map((x) => ({ ...x, symbol: x.symbol + (x.why === 'fee' ? ' · komissiya ' + Math.round(x.cost_r * 100) + '%R' : x.why === 'consensus' ? ' · konsensus şərti ödənmədi' : x.why === 'startup' ? ' · başlanğıc gözləməsi' : ' · gözləmə') })), 'skip')}` : ''}
     <h3>LONG rejimində (${(sig.long || []).length}${sig.evaluated ? ' / ' + sig.evaluated : ''}) — sarı çərçivə: hesabda var</h3>${active(sig.long, 'LONG')}
     <h3>SHORT rejimində (${(sig.short || []).length})</h3>${active(sig.short, 'SHORT')}`;
 

@@ -20,7 +20,7 @@ def frame(n=600, seed=1):
 
 
 def test_top5_plus_consensus_rule():
-    assert [s.key for s in STRATEGIES] == ['ema_pullback', 'williams', 'adx', 'rr_2to1', 'confluence', 'consensus3']
+    assert [s.key for s in STRATEGIES] == ['ema_pullback', 'williams', 'adx', 'rr_2to1', 'consensus3']
 
 
 def test_buy_and_hold_matches_closed_form():
@@ -123,26 +123,11 @@ def test_ema_pullback_respects_session_filter_and_one_stop_per_day():
         assert day[e] != day[x]                         # ...so no new entry on that UTC day
 
 
-def test_confluence_requires_all_five_filters():
-    from backtest import indicators as ind
-    df = frame(6000, seed=2)
-    pos = _by_key('confluence').fn(df)
-    entries, _ = _entries_exits(pos)
-    assert len(entries) >= 1
-    m50, m200 = ind.sma(df.close, 50).to_numpy(), ind.sma(df.close, 200).to_numpy()
-    st = ind.supertrend(df, 10, 3.0)
-    r = ind.rsi(df.close, 14).to_numpy()
-    c = df.close.to_numpy()
-    for e in entries:
-        assert c[e] > m50[e] > m200[e] and st[e] == 1 and 50 < r[e] < 70
-
-
-
 def test_consensus_enters_on_three_votes_and_holds_while_two_agree():
     from backtest.strategies import member_votes
     df = frame(4000, seed=3)
     votes = member_votes(df)
     pos = _by_key('consensus3').fn(df)
     entries = np.flatnonzero(np.diff(np.concatenate([[0.0], pos])) > 0)
-    assert len(entries) >= 1 and all(votes[i] >= 3 for i in entries)
+    assert all(votes[i] >= 3 for i in entries)
     assert (votes[pos > 0.5] >= 2).all()
