@@ -228,6 +228,21 @@ Nəticələr ekranda və `reports/futures_bt/` qovluğunda: `summary.csv`, `out_
 Seçimlər: `--strategies ema_pullback williams`, `--symbols BTCUSDT ETHUSDT`, `--oos 0.5`, `--train-days 14 --test-days 3 --pick 3`.
 Yalnız ən likvid coin-lər yüklənir (24 saatlıq həcm); şamlar `data/klines/`-də keşlənir, təkrar işlətmə sürətlidir.
 
+### 8 eksperiment bir komanda ilə
+
+```bash
+.venv/bin/python -m backtest.experiments --days 365 --top 50
+```
+
+Bir dəfə yüklənən məlumatla 8 variant: `base`, `short` (yalnız SHORT), `stoptp` (siqnal çıxışı yoxdur — yalnız stop / TP),
+`short_stoptp` və eyniləri 4 saatlıq şamlarla (`*_4h`). Hər order **sabit 100 $ marja** ilə açılır, ona görə heç bir hesab
+„boşalmır“ və out-of-sample dövr həqiqətən ticarət edilir. Keçid şərti (2000 $-a görə): Sharpe > 1, OOS mənfəət faktoru > 1.2,
+maks. geriləmə < 20%, ≥ 200 əməliyyat (≥ 50 OOS). Nəticə: ekranda müqayisə cədvəli, `reports/experiments/` və ev qovluğunda
+`experiments-<tarix>.zip`. Tək variant üçün: `python -m backtest.futures_sim --side short --signal-exits none --timeframe 4h --fixed-margin 100`.
+
+**Diqqət — çoxlu sınaq:** 26 strategiya × 8 variant = 208 cəhd. Tamamilə təsadüfi sintetik qiymətlərdə də 1 strategiya şərtləri
+„keçdi“. Şərti keçən strategiya yalnız namizəddir; canlı virtual testdə (≥ 4 həftə) təsdiqlənmədən real pula keçilməməlidir.
+
 ## Testlər
 
 ```bash

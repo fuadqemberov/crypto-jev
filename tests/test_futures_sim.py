@@ -124,3 +124,70 @@ def test_only_the_most_liquid_symbols_are_downloaded():
                     {'symbol': 'CUSDT', 'quoteVolume': '20'}, {'symbol': 'XUSDC', 'quoteVolume': '999'},
                     {'symbol': 'DUSDT', 'quoteVolume': '1'}]
     assert liquid_symbols(Fake(), 2) == ['BUSDT', 'CUSDT', 'AUSDT']   # 1.5 x 2 = 3, stablecoin pair excluded
+
+
+# --- experiment options -------------------------------------------------------------------------
+def walk(n=1200, seed=4, syms=('AUSDT', 'BUSDT')):
+    rng = np.random.default_rng(seed)
+    out = {}
+    for sym in syms:
+        close = 100 * np.exp(np.cumsum(rng.normal(0, 0.012, n)))
+        o = np.concatenate([[100], close[:-1]])
+        idx = pd.Index(T0 + np.arange(n) * H, name='time')
+        out[sym] = pd.DataFrame(dict(open=o, high=np.maximum(o, close) * 1.004, low=np.minimum(o, close) * 0.996,
+                                     close=close, volume=rng.uniform(100, 1000, n)), index=idx)
+    return out
+
+
+def test_resample_to_4h_is_exact():
+    from backtest.futures_sim import resample
+    d = walk(n=50)
+    r = resample(d, 4 * H)['AUSDT']
+    src = d['AUSDT']
+    first = src.loc[r.index[0]:r.index[0] + 3 * H]
+    assert len(first) == 4 and np.all(np.diff(r.index) == 4 * H) and int(r.index[0]) % (4 * H) == 0
+    assert r.iloc[0].open == first.open.iloc[0] and r.iloc[0].close == first.close.iloc[-1]
+    assert r.iloc[0].high == first.high.max() and r.iloc[0].low == first.low.min()
+    assert r.iloc[0].volume == pytest.approx(first.volume.sum())
+
+
+def test_side_filter_and_stop_tp_only_mode():
+    from dataclasses import replace
+    data = walk()
+    rules = [s for s in STRATEGIES if s.key in ('sma_cross', 'rsi', 'donchian')]
+    shorts = simulate(rules, data, settings(), side='short')
+    assert all(t['side'] == -1 for r in shorts.values() for t in r.trades) and any(r.trades for r in shorts.values())
+    longs = simulate(rules, data, settings(), side='long')
+    assert all(t['side'] == 1 for r in longs.values() for t in r.trades)
+    none = simulate(rules, data, replace(settings(), signal_exits='none'))
+    assert not {t['reason'] for r in none.values() for t in r.trades} & {'signal', 'reverse'}
+
+
+def test_fixed_margin_keeps_trading_after_the_account_is_drained():
+    from backtest.futures_sim import out_of_sample
+    data = walk(n=1500)
+    rules = [s for s in STRATEGIES if s.key in ('macd', 'psar')]
+    res = simulate(rules, data, settings(), fixed_margin=100.0)
+    for r in res.values():
+        assert r.fixed and all(t['margin'] == pytest.approx(100.0) for t in r.trades)
+        assert r.equity[-1] == pytest.approx(2000 + sum(t['pnl'] for t in r.trades), rel=1e-9)
+        late = [t for t in r.trades if t['opened_at'] >= int(r.times[1000])]
+        assert late                                                      # still trading in the last third
+    o = out_of_sample(res, 1000)
+    assert (o.oos_trades > 0).all() and set(o.columns) >= {'is_pf', 'oos_pf', 'is_trades', 'oos_trades'}
+
+
+def test_experiments_run_end_to_end(tmp_path, monkeypatch):
+    import zipfile
+    from backtest import experiments
+    monkeypatch.setattr(experiments.BinanceData, 'load_all', lambda self, a, b, c, d: (walk(n=600), []))
+    monkeypatch.setattr(experiments, 'liquid_symbols', lambda source, n: ['AUSDT', 'BUSDT'])
+    monkeypatch.setenv('HOME', str(tmp_path))
+    out = tmp_path / 'exp'
+    experiments.main(['--days', '25', '--top', '2', '--out', str(out), '--train-days', '5', '--test-days', '2',
+                      '--only', 'base', 'short_stoptp_4h'])
+    cmp_df = pd.read_csv(out / 'comparison.csv')
+    assert list(cmp_df.variant) == ['base', 'short_stoptp_4h']
+    assert (out / 'base' / 'summary.csv').exists() and (out / 'short_stoptp_4h' / 'walk_forward.csv').exists()
+    zips = list(tmp_path.glob('experiments-*.zip'))
+    assert zips and 'comparison.csv' in zipfile.ZipFile(zips[0]).namelist()
