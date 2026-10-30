@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import math
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -18,7 +19,8 @@ from app.ledger import Ledger
 from app.main import create_app
 from app.market import Quote
 from app.store import Store
-from backtest.strategies import STRATEGIES, Strategy
+from backtest.scalp import STRATEGIES
+from backtest.strategies import Strategy
 
 H = 3_600_000
 T0 = 1_790_000_000_000 // H * H
@@ -125,7 +127,8 @@ def test_leverage_is_chosen_by_strategy_and_volatility_from_1x_to_100x():
     assert leverage('rsi', 0.0005, 20) == 20                         # MAX_LEVERAGE wins
     assert leverage('rsi', float('nan'), 100) == 1
     assert settings().max_leverage == 100
-    assert set(LEVERAGE_PROFILE) == {s.key for s in STRATEGIES}
+    from backtest.strategies import STRATEGIES as HOURLY
+    assert set(LEVERAGE_PROFILE) == {s.key for s in [*HOURLY, *STRATEGIES]}
 
 
 def test_mirror_turns_long_rules_into_short_rules():
@@ -135,7 +138,8 @@ def test_mirror_turns_long_rules_into_short_rules():
                       index=pd.Index(T0 + np.arange(400) * H, name='time'))
     m = mirror(df)
     assert (m.high >= m.low).all() and np.allclose(mirror(m).close, df.close)
-    sma = next(s for s in STRATEGIES if s.key == 'sma_cross')
+    from backtest.strategies import STRATEGIES as HOURLY
+    sma = next(s for s in HOURLY if s.key == 'sma_cross')
     d = direction(sma, df)
     assert set(np.unique(d)) <= {-1, 0, 1} and (d == 1).any() and (d == -1).any()
     from backtest import indicators as ind
@@ -427,8 +431,8 @@ def test_api_endpoints_and_security_headers(tmp_path):
         assert r.status_code == 200 and len(body['strategies']) == len(STRATEGIES) and body['status']['market'] == 'USDT-M futures'
         assert body['status']['take_profit'] == 15
         assert "script-src 'self'" in r.headers['content-security-policy'] and r.headers['cache-control'] == 'no-store'
-        d = client.get('/api/strategy/rsi').json()
-        assert d['summary']['key'] == 'rsi' and 'SHORT' in d['short_rule']
+        d = client.get('/api/strategy/sc_rsi7').json()
+        assert d['summary']['key'] == 'sc_rsi7' and 'SHORT' in d['short_rule']
         assert client.get('/api/strategy/nope').status_code == 404
         assert set(client.get('/api/curves').json()) >= {s.key for s in STRATEGIES}
         assert client.get('/').status_code == 200 and client.get('/static/chart.umd.min.js').status_code == 200
@@ -449,7 +453,7 @@ def test_api_basic_auth(tmp_path):
 
 # --- config -------------------------------------------------------------------------------
 @pytest.mark.parametrize('kw', [
-    dict(timeframe='3m'), dict(symbols=('btc',)), dict(top_n=0), dict(max_leverage=0), dict(max_leverage=200),
+    dict(timeframe='2m'), dict(symbols=('btc',)), dict(top_n=0), dict(max_leverage=0), dict(max_leverage=200),
     dict(fee_rate=math.nan), dict(take_profit=-1), dict(user='a'), dict(binance_url='http://x.y'),
     dict(capital=50.0, margin_pct=1.0, min_margin=5.0), dict(max_leverage=125, maint_margin_rate=0.01),
 ])
@@ -588,7 +592,8 @@ def test_cost_filter_and_signal_exit_classification():
     assert cost_r('rsi', float('nan'), 0.001) == math.inf
     assert exits_on_signal('rsi', 'auto') and not exits_on_signal('macd', 'auto')
     assert exits_on_signal('macd', 'all') and not exits_on_signal('rsi', 'none')
-    assert OWN_EXIT_RULES <= {s.key for s in STRATEGIES}
+    from backtest.strategies import STRATEGIES as HOURLY
+    assert OWN_EXIT_RULES <= {s.key for s in HOURLY}
 
 
 def _calm(settings_kw, closes=None):
@@ -637,3 +642,48 @@ def test_new_defaults():
     assert (d.max_cost_r, d.signal_exits, d.cooldown_bars, d.max_hold_hours) == (0.10, 'all', 0, 0.0)
     with pytest.raises(ValueError):
         Settings(signal_exits='sometimes')
+
+
+
+# --- scalping-5m branch ---------------------------------------------------------------
+def test_thirty_unique_scalping_rules_without_lookahead():
+    from test_backtest import frame
+    assert len(STRATEGIES) == 30 and len({s.key for s in STRATEGIES}) == 30
+    df = frame(400, seed=21)
+    df.loc[df.index[200], 'volume'] *= 10                   # one volume spike for sc_volume_spike
+    changed = df.copy()
+    changed.iloc[300:, :4] *= 1.4
+    changed['high'] = changed[['open', 'high', 'close']].max(axis=1)
+    for s in STRATEGIES:
+        a, b = s.fn(df), s.fn(changed)
+        assert set(np.unique(a)) <= {0.0, 1.0}, s.key
+        assert np.array_equal(a[:300], b[:300]), s.key       # future bars never change past decisions
+        assert direction(s, df).any(), s.key                 # every rule trades (long or short)
+
+
+def test_every_position_closes_within_five_minutes():
+    m = ScriptedMarket({'AUSDT': [101, 101, 101]}, {'AUSDT': 1})
+    e = Engine(settings(take_profit=0.0, max_hold_hours=5 / 60), m, Store(':memory:'), [DIR])
+    tick(e, m, 0)
+    pos = e.ledger.accounts['dir'].positions['AUSDT']
+    m.live['AUSDT'] = pos.fill_price                         # flat price: no stop, no TP
+    m.offset = 60_000 + 4 * 60_000 + 50_000                  # 4m50s after the open: still held
+    tick(e, m)
+    assert 'AUSDT' in e.ledger.accounts['dir'].positions
+    m.offset = 60_000 + 5 * 60_000 + 5_000                   # 5m05s (one 5 s price poll late at most)
+    tick(e, m)
+    t = e.store.trades('dir')[0]
+    assert t['reason'] == 'timeout' and t['closed_at'] - t['opened_at'] <= 5 * 60_000 + 5_000
+
+
+def test_scalping_defaults_from_env(monkeypatch):
+    for k in ('TIMEFRAME', 'TOP_N', 'MAX_HOLD_MINUTES', 'MAX_LEVERAGE', 'PRICE_REFRESH_SECONDS', 'MAX_COST_R',
+              'SLIPPAGE_RATE', 'HISTORY_BARS', 'STARTUP_DELAY_SECONDS'):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.chdir(Path(__file__).parent)                 # no .env here
+    s = Settings.load()
+    assert (s.timeframe, s.interval_ms, s.top_n, s.max_leverage, s.price_seconds) == ('1m', 60_000, 30, 20, 5)
+    assert s.max_hold_hours == pytest.approx(5 / 60) and s.startup_delay_seconds == 60
+    assert (s.max_cost_r, s.slippage_rate, s.history_bars) == (0.35, 0.0002, 300)
+    monkeypatch.setenv('MAX_HOLD_MINUTES', '3')
+    assert Settings.load().max_hold_hours == pytest.approx(3 / 60)

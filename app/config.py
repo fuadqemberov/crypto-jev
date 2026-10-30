@@ -1,4 +1,4 @@
-"""Runtime settings for the 26-strategy USDT-M futures paper-trading system (read from .env)."""
+"""Runtime settings for the 30-strategy scalping USDT-M futures paper-trading system (read from .env)."""
 from __future__ import annotations
 
 import math
@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-TIMEFRAMES = {'15m': 900_000, '30m': 1_800_000, '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000}
+TIMEFRAMES = {'1m': 60_000, '3m': 180_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000, '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000}
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,8 @@ class Settings:
     max_cost_r: float = 0.10             # skip an entry if round-trip fee+slippage > this share of the stop distance; 0 = off
     signal_exits: str = 'all'            # all: every rule exits on its opposite signal; auto: only own-exit rules; none
     cooldown_bars: int = 0               # after a close, the same strategy waits this many candles on that coin; 0 = off
-    max_hold_hours: float = 0.0          # close a position held longer than this; 0 = off
+    max_hold_hours: float = 0.0          # close a position held longer than this; 0 = off (env: MAX_HOLD_MINUTES)
+    startup_delay_seconds: int = 0       # after a (re)start no new orders for this long; exits keep working
     fee_rate: float = 0.0005             # taker fee per side (Binance USDT-M default 0.05%)
     slippage_rate: float = 0.0005
     maint_margin_rate: float = 0.005     # maintenance margin used for the liquidation check
@@ -51,7 +52,7 @@ class Settings:
             raise ValueError(f'TIMEFRAME bunlardan biri olmalıdır: {", ".join(TIMEFRAMES)}')
         for name, low, high in [('top_n', 1, 500), ('max_leverage', 1, 125), ('history_bars', 250, 1000),
                                 ('price_seconds', 5, 300), ('candle_delay_seconds', 0, 120), ('kline_parallelism', 1, 16),
-                                ('cooldown_bars', 0, 500)]:
+                                ('cooldown_bars', 0, 500), ('startup_delay_seconds', 0, 86_400)]:
             value = getattr(self, name)
             if type(value) is not int or not low <= value <= high:
                 raise ValueError(f'{name.upper()} {low}–{high} aralığında tam ədəd olmalıdır.')
@@ -87,18 +88,20 @@ class Settings:
         env = os.getenv
         return cls(
             symbols=tuple(dict.fromkeys(s.strip().upper() for s in env('SYMBOLS', 'ALL').split(',') if s.strip())),
-            top_n=int(env('TOP_N', '50')), timeframe=env('TIMEFRAME', '1h').strip(),
+            top_n=int(env('TOP_N', '30')), timeframe=env('TIMEFRAME', '1m').strip(),
             capital=float(env('START_CAPITAL', '2000')), margin_pct=float(env('ORDER_MARGIN_PCT', '5')),
             min_margin=float(env('MIN_MARGIN_USDT', '5')), take_profit=float(env('TAKE_PROFIT_USDT', '0')),
             tp_r_multiple=float(env('TP_R_MULTIPLE', '1.5')), risk_per_move=float(env('RISK_PER_MOVE', '0.25')),
             stop_loss_pct=float(env('STOP_LOSS_PCT', '50')),
-            max_leverage=int(env('MAX_LEVERAGE', '100')),
-            max_cost_r=float(env('MAX_COST_R', '0.10')), signal_exits=env('SIGNAL_EXITS', 'all').strip().lower(),
-            cooldown_bars=int(env('COOLDOWN_BARS', '0')), max_hold_hours=float(env('MAX_HOLD_HOURS', '0')),
-            fee_rate=float(env('FEE_RATE', '0.0005')), slippage_rate=float(env('SLIPPAGE_RATE', '0.0005')),
+            max_leverage=int(env('MAX_LEVERAGE', '20')),
+            max_cost_r=float(env('MAX_COST_R', '0.35')), signal_exits=env('SIGNAL_EXITS', 'all').strip().lower(),
+            cooldown_bars=int(env('COOLDOWN_BARS', '0')),
+            max_hold_hours=float(env('MAX_HOLD_MINUTES', '5')) / 60,      # scalping: every trade ends within N minutes
+            startup_delay_seconds=int(env('STARTUP_DELAY_SECONDS', '60')),
+            fee_rate=float(env('FEE_RATE', '0.0005')), slippage_rate=float(env('SLIPPAGE_RATE', '0.0002')),
             maint_margin_rate=float(env('MAINT_MARGIN_RATE', '0.005')),
-            history_bars=int(env('HISTORY_BARS', '500')),
-            price_seconds=int(env('PRICE_REFRESH_SECONDS', '15')),
+            history_bars=int(env('HISTORY_BARS', '300')),
+            price_seconds=int(env('PRICE_REFRESH_SECONDS', '5')),
             candle_delay_seconds=int(env('CANDLE_DELAY_SECONDS', '5')),
             kline_parallelism=int(env('KLINE_PARALLELISM', '6')),
             data_dir=Path(env('DATA_DIR', 'data')),

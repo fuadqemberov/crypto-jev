@@ -1,4 +1,4 @@
-"""Futures layer on top of the 26 long-only rules in ``backtest/strategies.py``.
+"""Futures layer on top of the long-only rules (scalping-5m branch: the 30 in ``backtest/scalp.py``).
 
 Direction
     LONG  – the strategy's own long rule on the real price series.
@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 
 from backtest import indicators as ind
+from backtest import scalp
 from backtest.strategies import Strategy
 
 log = logging.getLogger('app.futures')
@@ -45,6 +46,7 @@ LEVERAGE_PROFILE: dict[str, tuple[float, int]] = {
     # ceilings from the videos: 25x for the pull-back rules, 3-5x for the bot signals
     'ema_pullback': (2.5, 25), 'range_scalp': (2.0, 100), 'confluence': (3.0, 5),
 }
+LEVERAGE_PROFILE.update({k: (m, 100) for k, m in scalp.ATR_MULT.items()})   # 30 scalping rules
 DEFAULT_PROFILE = (3.0, 100)
 
 # SIGNAL_EXITS=auto (experimental, off by default): rules whose exit signal IS their profit target / own

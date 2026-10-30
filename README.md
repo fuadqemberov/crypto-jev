@@ -1,3 +1,24 @@
+# 30 Scalping strategiyası — `scalping-5m` branch
+
+> **Sürətli ticarət:** 1 dəqiqəlik şamlar, 30 fərqli scalping strategiyası (`backtest/scalp.py`), hər biri ayrıca
+> 2000 $ virtual futures hesabı ilə. **Hər mövqe ən gec 5 dəqiqədə bağlanır** (`MAX_HOLD_MINUTES`, „Vaxt“ səbəbi);
+> daha tez stop-loss, 1.5R take-profit və ya strategiyanın öz çıxış siqnalı ilə bağlana bilər. Qiymət hər 5 s yoxlanır.
+>
+> | Qrup | Strategiyalar |
+> |---|---|
+> | Trend (11) | EMA 5/13, EMA 9/21 + EMA50, sürətli MACD 6/13/5, MACD sıfır kəsişməsi, Supertrend 7/2, TEMA 5/15, Hull MA 9, sürətli İçimoku 6/13, ADX 7 + DI, sürətli PSAR, Heikin-Ashi |
+> | Qırılma / impuls (9) | Donçian 10, Keltner 10/1.5, Bollinger sıxılma, ROC 5, həcm partlayışı, inside-bar, 3 şamlıq impuls, VWAP kəsişməsi, VWAP sıçrayışı |
+> | Orta qiymətə qayıdış (8) | RSI 7, RSI 2, Stoxastik 5/3, Bollinger alt zolaq, CCI 14, Williams %R 7, MFI 7, Z-score 20 |
+> | Şam modeli (2) | Bullish engulfing, dibdə çəkic (hammer) |
+>
+> Default ayarlar (`.env.example`): `TIMEFRAME=1m`, `TOP_N=30` (ən likvid coin-lər), `MAX_HOLD_MINUTES=5`,
+> `PRICE_REFRESH_SECONDS=5`, `MAX_LEVERAGE=20`, `MAX_COST_R=0.35`, `SLIPPAGE_RATE=0.0002`, `HISTORY_BARS=300`,
+> `STARTUP_DELAY_SECONDS=60`. SHORT, stop-loss, TP, komissiya filtri, pauza düyməsi və `app.export` 1h versiyadakı kimidir.
+>
+> **Vacib:** 1 dəqiqəlik scalping-də hər əməliyyat ~0.14% xərc (komissiya + sürüşmə, gediş-dönüş) ödəyir, 5 dəqiqədə
+> isə qiymət çox vaxt 0.1–0.5% hərəkət edir. Yəni xərc qazancın böyük hissəsini yeyə bilər; `MAX_COST_R` filtri yalnız
+> hərəkəti xərcdən kifayət qədər böyük olan coin-lərdə girişə icazə verir. Saatlıq 26 strategiyalı versiya `master`-dədir.
+
 # 26 Strategiya — canlı virtual futures ticarəti
 
 Python 3.12+ · FastAPI · Binance USDT-M futures açıq bazar məlumatı · Azərbaycan dilində dashboard.

@@ -13,7 +13,7 @@ import os
 import sqlite3
 import zipfile
 
-from backtest.strategies import STRATEGIES
+from backtest.scalp import STRATEGIES
 
 from .config import Settings
 

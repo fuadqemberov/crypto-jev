@@ -1,4 +1,4 @@
-"""Live paper-trading engine: 26 strategies, 26 independent virtual USDT-M futures wallets.
+"""Live paper-trading engine: 30 scalping strategies, 30 independent virtual USDT-M futures wallets.
 
 Every ``PRICE_REFRESH_SECONDS`` mark prices and funding are refreshed and, for every account:
 funding is settled when a funding time passes, positions hitting maintenance margin are
@@ -30,7 +30,8 @@ from typing import Any
 
 import pandas as pd
 
-from backtest.strategies import STRATEGIES, Strategy
+from backtest.scalp import STRATEGIES
+from backtest.strategies import Strategy
 
 from .config import Settings
 from .futures import Signal, cost_r, evaluate, exits_on_signal, leverage, leverage_rule, stop_distance
@@ -68,6 +69,8 @@ class Engine:
         self.entries_paused: bool = bool(pause.get('paused'))
         self.paused_at: int | None = pause.get('at')
         self.last_close: dict[tuple[str, str], int] = store.last_closes()   # cooldown bookkeeping
+        # warm-up: no new orders right after a (re)start — the first candle processed may be old
+        self.warmup_until = market.now_ms() + settings.startup_delay_seconds * 1000
         self.prices: dict[str, float] = {}
         self.funding: dict[str, tuple[int, float]] = {}      # symbol -> (next settlement ms, rate)
         self.last_price_at: int | None = None
@@ -105,7 +108,7 @@ class Engine:
                 now - (closed + self.interval) >= self.settings.candle_delay_seconds * 1000:
             await self.process_candle(closed)
         equity = self.ledger.update_prices({})
-        if now - self.last_snapshot >= self.interval // 12:
+        if now - self.last_snapshot >= max(self.interval // 12, 60_000):   # at most one equity row per minute
             self.snapshot(now, equity)
         self.last_error = None
 
@@ -213,6 +216,9 @@ class Engine:
             for symbol in ranked:
                 sig = st.get(symbol)
                 if not sig or sig.cur == 0 or sig.prev == sig.cur or symbol in acc.positions:
+                    continue
+                if ts < self.warmup_until:                # just (re)started: possibly stale candle, wait
+                    filtered.append({'symbol': symbol, 'side': SIDE[sig.cur], 'why': 'startup'})
                     continue
                 if self.entries_paused:                   # new entries stopped; open positions keep running
                     paused.append({'symbol': symbol, 'side': SIDE[sig.cur]})
@@ -346,6 +352,7 @@ class Engine:
             'fee_pct': self.settings.fee_rate * 100, 'slippage_pct': self.settings.slippage_rate * 100,
             'candle_seconds': self.candle_seconds, 'error': self.last_error,
             'entries_paused': self.entries_paused, 'paused_at': self.paused_at,
+            'warmup_until': self.warmup_until if now < self.warmup_until else None,
             'open_positions': sum(len(a.positions) for a in self.ledger.accounts.values()),
         }
 

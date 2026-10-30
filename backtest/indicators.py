@@ -168,3 +168,42 @@ def mfi(df: pd.DataFrame, n: int = 14) -> pd.Series:
     neg = flow.where(diff < 0, 0.0).rolling(n).sum()
     ratio = pos / neg.replace(0, np.nan)
     return (100 - 100 / (1 + ratio)).where(neg != 0, 100.0).where(pos.notna())
+
+
+# --- fast indicators for 1-minute scalping ---------------------------------------------------
+def wma(s: pd.Series, n: int) -> pd.Series:
+    """Linearly weighted moving average."""
+    n = max(1, int(n))
+    out = pd.Series(np.nan, index=s.index)
+    if len(s) >= n:
+        w = np.arange(1, n + 1, dtype=float)
+        win = np.lib.stride_tricks.sliding_window_view(s.to_numpy(dtype=float), n)
+        out.iloc[n - 1:] = win @ w / w.sum()
+    return out
+
+
+def hma(s: pd.Series, n: int = 9) -> pd.Series:
+    """Hull moving average: WMA(2·WMA(n/2) − WMA(n), √n)."""
+    return wma(2 * wma(s, n // 2) - wma(s, n), int(np.sqrt(n)))
+
+
+def heikin_ashi(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """(ha_open, ha_close). ha_open[t] uses only bars < t."""
+    o, h, l, c = (df[k].to_numpy(dtype=float) for k in ('open', 'high', 'low', 'close'))
+    ha_close = (o + h + l + c) / 4
+    ha_open = np.empty(len(df))
+    if len(df):
+        ha_open[0] = (o[0] + c[0]) / 2
+        for i in range(1, len(df)):
+            ha_open[i] = (ha_open[i - 1] + ha_close[i - 1]) / 2
+    return pd.Series(ha_open, index=df.index), pd.Series(ha_close, index=df.index)
+
+
+def roc(s: pd.Series, n: int = 5) -> pd.Series:
+    """Rate of change in percent."""
+    return (s / s.shift(n) - 1) * 100
+
+
+def zscore(s: pd.Series, n: int = 20) -> pd.Series:
+    sd = s.rolling(n, min_periods=n).std(ddof=0)
+    return (s - sma(s, n)) / sd.replace(0, np.nan)

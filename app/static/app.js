@@ -1,5 +1,5 @@
 'use strict';
-/* 26 strategy virtual trading dashboard. Reads /api/*; the only write is the pause switch for NEW entries. */
+/* 30 scalping strategy virtual trading dashboard. Reads /api/*; the only write is the pause switch for NEW entries. */
 
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 10000;
@@ -29,7 +29,7 @@ function duration(ms) {
 const REASONS = { take_profit: ['TP', 'tp'], signal: ['Siqnal', ''], reverse: ['Çevrilmə', ''], liquidation: ['Likvidasiya', 'liq'], stop_loss: ['Stop', 'sl'], timeout: ['Vaxt', ''] };
 const reasonTag = (r) => { const [t, c] = REASONS[r] || [r, '']; return `<span class="reason ${c}">${esc(t)}</span>`; };
 const sideTag = (side, suffix = '') => `<span class="side ${side === 'LONG' ? 'buy' : 'sell'}">${esc(side)}${suffix}</span>`;
-const color = (i, n = 26) => `hsl(${Math.round(i * 360 / n)}, 72%, 60%)`;
+const color = (i, n = 30) => `hsl(${Math.round(i * 360 / n)}, 72%, 60%)`;
 
 async function getJSON(url) {
   const r = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store', credentials: 'same-origin' });
@@ -83,9 +83,11 @@ function renderPause(st) {
   btn.classList.toggle('paused', !!st.entries_paused);
   btn.textContent = st.entries_paused ? '▶ Yeni siqnallara icazə ver' : '⏸ Yeni siqnalları dayandır';
   btn.title = st.entries_paused ? 'Strategiyalar yenidən yeni mövqe aça bilər' : 'Açıq mövqelər stop / TP / siqnalla bağlanana qədər davam edir, yeni mövqe açılmır';
-  $('paused-banner').textContent = st.entries_paused
+  const warm = st.warmup_until ? `⏳ Bot yenicə başladı: ${Math.max(1, Math.ceil((st.warmup_until - st.now) / 1000))} s ərzində yeni order açılmır.  ` : '';
+  const hold = st.max_hold_hours > 0 ? `⚡ Scalping: hər mövqe ən gec ${Math.round(st.max_hold_hours * 60)} dəqiqədə bağlanır.  ` : '';
+  $('paused-banner').textContent = warm + hold + (st.entries_paused
     ? `⏸ Yeni siqnallar dayandırılıb (${when(st.paused_at)}) — yeni mövqe açılmır. ${st.open_positions} açıq mövqe stop / TP / siqnalla bağlanana qədər davam edir.`
-    : '';
+    : '');
 }
 async function togglePause() {
   const st = state.status;
@@ -237,7 +239,7 @@ function renderDetail(d) {
   const s = d.summary;
   $('s-name').textContent = `${s.order}. ${s.name}`;
   $('s-family').textContent = s.family;
-  $('s-rank').textContent = `· reytinq #${s.rank} / ${state.overview ? state.overview.strategies.length : 26} · başlanğıc ${when(s.started_at)}`;
+  $('s-rank').textContent = `· reytinq #${s.rank} / ${state.overview ? state.overview.strategies.length : 30} · başlanğıc ${when(s.started_at)}`;
   $('s-rules').textContent = 'LONG: ' + d.rules;
   $('s-short').textContent = d.short_rule;
   $('s-lev').textContent = d.leverage_rule + ` Marja: balansın ${d.status.margin_pct}%-i; TP: ${d.status.tp_r_multiple > 0 ? 'stop məsafəsinin ' + d.status.tp_r_multiple + ' qatı (' + d.status.tp_r_multiple + 'R)' : 'R-TP yox'}${d.status.take_profit > 0 ? ' və ya xalis $' + d.status.take_profit : ''}.` +
@@ -245,7 +247,7 @@ function renderDetail(d) {
     (d.summary.signal_exit ? ' Çıxış: stop / TP və əks siqnal.' : ` Çıxış: yalnız stop / TP${d.status.max_hold_hours > 0 ? ' / ' + d.status.max_hold_hours + ' saat' : ''} (əks siqnal mövqeni bağlamır).`) +
     (d.status.max_cost_r > 0 ? ` Komissiya riskin ${Math.round(d.status.max_cost_r * 100)}%-indən çoxdursa giriş edilmir.` : '') +
     (d.status.cooldown_bars > 0 ? ` Bağlanışdan sonra ${d.status.cooldown_bars} şam gözləmə.` : '');
-  document.title = `${s.name} — 26 Strategiya`;
+  document.title = `${s.name} — 30 Scalping`;
   const kpis = [
     ['Balans', money(s.equity), `<span class="${cls(s.return_pct)}">${pct(s.return_pct)}</span> (başlanğıc ${money(s.capital)})`],
     ['Realizə olunmuş PnL', `<span class="${cls(s.realized)}">${money(s.realized, true)}</span>`, 'bağlanmış əməliyyatlar'],
@@ -282,7 +284,7 @@ function renderDetail(d) {
     <h3>Siqnalla bağlandı / çevrildi</h3>${orders(sig.exits)}
     <h3>Sərbəst marja çatmadığı üçün buraxıldı</h3>${orders(sig.skipped, 'skip')}
     ${(sig.paused || []).length ? `<h3>Yeni siqnallar dayandırıldığı üçün açılmadı (${sig.paused.length})</h3>${orders(sig.paused, 'skip')}` : ''}
-    ${(sig.filtered || []).length ? `<h3>Filtr: komissiya riskə görə çox və ya gözləmə müddəti (${sig.filtered.length})</h3>${orders(sig.filtered.map((x) => ({ ...x, symbol: x.symbol + (x.why === 'fee' ? ' · komissiya ' + Math.round(x.cost_r * 100) + '%R' : ' · gözləmə') })), 'skip')}` : ''}
+    ${(sig.filtered || []).length ? `<h3>Filtr: komissiya riskə görə çox və ya gözləmə müddəti (${sig.filtered.length})</h3>${orders(sig.filtered.map((x) => ({ ...x, symbol: x.symbol + (x.why === 'fee' ? ' · komissiya ' + Math.round(x.cost_r * 100) + '%R' : x.why === 'startup' ? ' · başlanğıc gözləməsi' : ' · gözləmə') })), 'skip')}` : ''}
     <h3>LONG rejimində (${(sig.long || []).length}${sig.evaluated ? ' / ' + sig.evaluated : ''}) — sarı çərçivə: hesabda var</h3>${active(sig.long, 'LONG')}
     <h3>SHORT rejimində (${(sig.short || []).length})</h3>${active(sig.short, 'SHORT')}`;
 
