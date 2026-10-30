@@ -206,6 +206,28 @@ python -m backtest --days 183 --capital 2000 --out crypto_strategies_report.html
 
 Backtest spot, long-only və leverage-siz olduğu üçün canlı futures nəticələri ilə birbaşa üst-üstə düşməyəcək.
 
+## Canlı qaydalarla futures backtest + out-of-sample + walk-forward
+
+```bash
+.venv/bin/python -m backtest.futures_sim --days 365 --top 50
+```
+
+`backtest/futures_sim.py` canlı botun **öz mühasibatını** (`app.ledger.Ledger`) və qaydalarını tarixi 1h şamlarda təkrarlayır:
+LONG + güzgü SHORT, növbəti şamın açılışında giriş, ATR-ə görə leverage, komissiya filtri (`MAX_COST_R`), stop-loss və 1.5R TP
+(şam daxilində: boşluq → açılış qiyməti, fitil → səviyyə, eyni şamda ikisi → stop sayılır), siqnal çıxışı, komissiya + sürüşmə.
+Ayarlar `.env`-dən oxunur (canlı bot kimi). Funding və spot/perpetual qiymət fərqi modelləşdirilmir.
+
+İki etibarlılıq testi — „qalibləri seçmək işləyirmi?“:
+
+- **Out-of-sample:** strategiyalar dövrün ilk 2/3-də sıralanır, görmədiyi son 1/3-də yoxlanır; sıralama korrelyasiyası ρ
+  (+1 qaliblər qalib qalır, 0 təsadüf).
+- **Walk-forward:** hər 7 gündə son 30 günün ən yaxşı 5 strategiyası seçilir və növbəti 7 gün izlənir — dashboard-da əllə
+  etdiyimiz seçimin avtomatik yoxlaması. Qaliblər, bütün strategiyalar və „uduzanlar“ müqayisə olunur.
+
+Nəticələr ekranda və `reports/futures_bt/` qovluğunda: `summary.csv`, `out_of_sample.csv`, `walk_forward.csv`, `trades.csv`.
+Seçimlər: `--strategies ema_pullback williams`, `--symbols BTCUSDT ETHUSDT`, `--oos 0.5`, `--train-days 14 --test-days 3 --pick 3`.
+Yalnız ən likvid coin-lər yüklənir (24 saatlıq həcm); şamlar `data/klines/`-də keşlənir, təkrar işlətmə sürətlidir.
+
 ## Testlər
 
 ```bash
