@@ -35,6 +35,15 @@
 
   <main>
     <section id="view-overview" hidden>
+      <div class="panel trend">
+        <div class="panel-head"><h2>Trend portfeli — 3 aylıq canlı sınaq</h2><span class="muted" id="tr-note"></span></div>
+        <div class="kpis" id="tr-kpis"></div>
+        <div class="grid-2">
+          <div class="chart-box"><canvas id="tr-chart"></canvas></div>
+          <div class="table-wrap short"><table id="tr-positions"></table></div>
+        </div>
+        <details><summary>Son yenidən balanslaşdırmalar</summary><div class="table-wrap short"><table id="tr-trades"></table></div></details>
+      </div>
       <div class="kpis" id="ov-kpis"></div>
       <div class="panel">
         <div class="panel-head"><h2>Balans dinamikası — 26 hesab</h2><span class="muted" id="ov-chart-note">hər xətt bir strategiyanın 2000 $ hesabıdır; qırıq xətt — benchmark (al və saxla)</span></div>

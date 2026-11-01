@@ -21,6 +21,7 @@ from .demo import DemoMarket
 from .engine import Engine
 from .market import BinanceMarket
 from .store import Store
+from .trend_paper import TrendPaper
 
 STATIC = Path(__file__).parent / 'static'
 CONTROL_PATH = '/api/control/entries'
@@ -45,12 +46,16 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, mark
         async with httpx.AsyncClient(timeout=httpx.Timeout(20), follow_redirects=False) as client:
             source = market or (DemoMarket(settings) if settings.demo else BinanceMarket(settings, client))
             app.state.engine = Engine(settings, source, store)
-            worker = asyncio.create_task(app.state.engine.run()) if start_worker else None
+            app.state.trend = TrendPaper(settings, source)
+            workers = [asyncio.create_task(app.state.engine.run())] if start_worker else []
+            if start_worker and not getattr(source, 'demo', False):
+                workers.append(asyncio.create_task(app.state.trend.run()))
             try:
                 yield
             finally:
-                if worker:
+                for worker in workers:
                     worker.cancel()
+                for worker in workers:
                     with suppress(asyncio.CancelledError):
                         await worker
                 store.close()
@@ -107,6 +112,10 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, mark
     @app.get('/api/curves')
     async def curves() -> dict[str, Any]:
         return app.state.engine.curves()
+
+    @app.get('/api/trend')
+    async def trend() -> dict[str, Any]:
+        return app.state.trend.summary()
 
     @app.post(CONTROL_PATH)
     async def entries(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:

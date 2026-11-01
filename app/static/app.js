@@ -232,6 +232,33 @@ function renderCurves(curves) {
   lineChart('ov-chart', datasets);
 }
 
+/* ---------- trend portfolio (forward test) ---------- */
+function renderTrend(t) {
+  const started = isNum(t.started_at);
+  const days = started ? Math.max(0, (Date.now() + state.clockOffset - t.started_at) / 86400000) : 0;
+  $('tr-note').textContent = started
+    ? `${days.toFixed(1)} / 90 gün · parametrlər donmuşdur · növbəti yeniləmə ${when(t.next_run)}`
+    : 'ilk 6 saatlıq şamın bağlanması gözlənilir (UTC 00/06/12/18)';
+  if (t.error) $('tr-note').textContent += ` · xəta: ${t.error.message}`;
+  $('tr-kpis').innerHTML = [
+    ['Balans', money(t.equity), `başlanğıc ${money(t.capital)}`],
+    ['Gəlir', `<span class="${cls(t.return_pct)}">${pct(t.return_pct)}</span>`, isNum(t.btc_return_pct) ? `BTC eyni dövrdə ${pct(t.btc_return_pct)}` : 'BTC müqayisəsi başlayanda'],
+    ['Maks. geriləmə', `<span class="neg">-${num(t.max_dd_pct)}%</span>`, 'backtest gözləntisi ≈ 19%'],
+    ['Bazarda', `${num(t.gross * 100, 0)}%`, `${t.positions.length} coin · yalnız LONG`],
+    ['Komissiya / funding', `${money(t.fees)} / ${money(t.funding)}`, `${t.fills} əməliyyat`],
+  ].map(([a, v, sub]) => `<div class="kpi"><small>${a}</small><strong>${v}</strong><span>${sub}</span></div>`).join('');
+  $('tr-positions').innerHTML = '<thead><tr><th class="l">Coin</th><th>Pay</th><th>Dəyər</th><th>Qiymət</th></tr></thead><tbody>' +
+    (t.positions.length ? t.positions.map((p) => `<tr><td class="l"><b>${esc(p.symbol)}</b></td><td>${num(p.weight * 100, 1)}%</td><td>${money(p.value)}</td><td>${price(p.price)}</td></tr>`).join('')
+      : '<tr><td colspan="4" class="empty">Mövqe yoxdur — trend olmayanda portfel nağd qalır</td></tr>') + '</tbody>';
+  $('tr-trades').innerHTML = '<thead><tr><th>Vaxt</th><th class="l">Coin</th><th>Pay: əvvəl → sonra</th><th>Alış / satış</th><th>Qiymət</th><th>Komissiya</th></tr></thead><tbody>' +
+    (t.trades.length ? t.trades.map((x) => `<tr><td>${when(x.ts)}</td><td class="l">${esc(x.symbol)}</td><td>${num(x.from_w * 100, 1)}% → ${num(x.to_w * 100, 1)}%</td>
+      <td class="${cls(x.value)}">${money(x.value, true)}</td><td>${price(x.price)}</td><td>${money(x.fee)}</td></tr>`).join('')
+      : '<tr><td colspan="6" class="empty">Hələ əməliyyat yoxdur</td></tr>') + '</tbody>';
+  const ds = [{ label: 'Trend portfeli', data: series(t.curve), borderColor: '#f0b90b', backgroundColor: '#f0b90b', borderWidth: 2 }];
+  if (t.btc_curve.length) ds.push({ label: 'BTC al və saxla', data: series(t.btc_curve), borderColor: '#9aa3ae', backgroundColor: '#9aa3ae', borderDash: [6, 4] });
+  lineChart('tr-chart', ds);
+}
+
 /* ---------- strategy section ---------- */
 function renderDetail(d) {
   const s = d.summary;
@@ -328,6 +355,7 @@ async function refresh(force = false) {
         state.curvesAt = Date.now();
       }
       renderCurves(state.curves);
+      try { renderTrend(await getJSON('/api/trend')); } catch (e) { $('tr-note').textContent = 'trend məlumatı yoxdur'; }
     }
   } catch (err) {
     $('notice').textContent = 'Serverlə əlaqə yoxdur: ' + err.message;

@@ -25,6 +25,18 @@ Tək proses: engine və dashboard birlikdədir; `--workers 1` saxlayın.
 işlədin. Şəbəkəsiz sınaq: `DEMO_MODE=true` — sintetik futures bazarı, sürətləndirilmiş saat
 (hər `DEMO_CANDLE_SECONDS` saniyədə bir şam), ayrıca `data/demo-futures.db`.
 
+## Trend portfeli — 3 aylıq canlı sınaq
+
+26 strategiya 1 illik backtest-də (`python -m backtest.experiments`) heç bir variantda keçid şərtini ödəmədi.
+2 illik trend portfeli backtest-i (`python -m backtest.trend --days 730 --top 20`) ən yaxşı nəticəni verdi
+(yalnız LONG, 6h: +62%, BTC +11%), amma o da şərti keçmədi (Sharpe 0.81 < 1, geriləmə 38% > 20%).
+
+Ona görə bu variant **dəyişdirilmədən, yarım ölçü ilə** (hədəf volatillik 12.5%) virtual 2000 $ ilə canlı
+işləyir (`app/trend_paper.py`): hər 6 saatdan bir (UTC 00/06/12/18) ən likvid 20 perpetual üçün Donçian
+ansamblı (10/20/40/80 gün) hesablanır, mövqelər volatilliyə görə ölçülür və yenidən balanslaşdırılır.
+Dashboard-da „Ümumi baxış“ın yuxarısında görünür; vəziyyət `data/trend-paper.json`-dadır (silsəniz sıfırdan başlayır).
+3 ay sonra canlı nəticə backtest-ə uyğun gəlməsə, aktiv ticarət fikri dayandırılır.
+
 ## Necə işləyir
 
 | Addım | Təsvir |
