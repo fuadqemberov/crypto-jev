@@ -256,6 +256,14 @@ function renderMix(m) {
   $('mx-log').innerHTML = '<thead><tr><th>Vaxt</th><th class="l">Hissə</th><th class="l">Əməliyyat</th><th class="l">Coin</th><th>Məbləğ</th><th class="l">Qeyd</th></tr></thead><tbody>' +
     (m.log.length ? m.log.map((x) => `<tr><td>${when(x.ts)}</td><td class="l">${esc(x.sleeve)}</td><td class="l">${esc(x.action)}</td><td class="l">${esc(x.symbol)}</td>
       <td>${money(x.amount)}</td><td class="l muted">${esc(x.note)}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">Hələ əməliyyat yoxdur</td></tr>') + '</tbody>';
+  const lv = m.live;
+  $('lv-box').innerHTML = !lv || !lv.enabled ? '<p class="muted">Real ticarət söndürülüb (LIVE_TRADING=false) — yalnız virtual.</p>' :
+    `<h3>🔴 REAL Binance hesabı — limit ${money(lv.capital)}${lv.halted ? ' · <span class="neg">ZƏRƏR LİMİTİ: yeni orderlər dayandırılıb</span>' : ''}</h3>` +
+    (lv.error ? `<p class="neg">Xəta: ${esc(lv.error.message)}</p>` : '') +
+    `<p>Spot dəyəri ${money(lv.spot_value)} · komissiya ${money(lv.fees)} · ${lv.shorts.length} short</p>` +
+    '<div class="table-wrap short"><table><thead><tr><th>Vaxt</th><th class="l">Növ</th><th class="l">Coin</th><th class="l">Tərəf</th><th>Miqdar</th><th>Qiymət</th><th>Dəyər</th></tr></thead><tbody>' +
+    (lv.orders.length ? lv.orders.map((o) => `<tr><td>${when(o.ts)}</td><td class="l">${esc(o.kind)}</td><td class="l">${esc(o.symbol)}</td><td class="l">${esc(o.side)} ${esc(o.note)}</td>
+      <td>${num(o.qty, 6)}</td><td>${price(o.price)}</td><td>${money(o.value)}</td></tr>`).join('') : '<tr><td colspan="7" class="empty">Hələ real order yoxdur</td></tr>') + '</tbody></table></div>';
   const ds = [{ label: 'Qarışıq portfel', data: series(m.curve), borderColor: '#f0b90b', backgroundColor: '#f0b90b', borderWidth: 2 }];
   if (m.btc_curve.length) ds.push({ label: 'BTC al və saxla', data: series(m.btc_curve), borderColor: '#9aa3ae', backgroundColor: '#9aa3ae', borderDash: [6, 4] });
   lineChart('mx-chart', ds);

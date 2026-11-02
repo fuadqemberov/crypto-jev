@@ -22,6 +22,7 @@ from typing import Any
 import numpy as np
 
 from .config import Settings
+from .live import LiveExecutor
 from .trend_paper import TrendPaper
 
 log = logging.getLogger('app.mix')
@@ -56,6 +57,9 @@ class MixPortfolio:
         self.error: dict | None = None
         self.prices: dict[str, float] = {}
         self.state = self._read() or self._fresh()
+        self.live = LiveExecutor(settings.data_dir)
+        if self.live.enabled:
+            log.warning('REAL TİCARƏT AKTİVDİR: Binance hesabında orderlər açılacaq (limit %.0f $)', self.live.capital)
 
     # -- persistence -----------------------------------------------------------------
     def _fresh(self) -> dict:
@@ -119,6 +123,25 @@ class MixPortfolio:
         if not st['history'] or now - st['history'][-1][0] >= HOUR:
             st['history'] = (st['history'] + [[now, round(self.total(), 2), self.prices.get('BTCUSDT')]])[-5000:]
         self._save()
+        if self.live.enabled:
+            spot, short = self.live_targets()
+            await self.live.reconcile(spot, short, self.total())
+
+    def live_targets(self) -> tuple[dict[str, float], dict[str, float]]:
+        """What the real account should hold: spot quantities (DCA + trend + carry spot legs) and carry shorts."""
+        spot: dict[str, float] = {}
+        short: dict[str, float] = {}
+        for s, q in self.state['dca']['qty'].items():
+            spot[s] = spot.get(s, 0.0) + q
+        t = self.trend.state
+        for s, w in t['held'].items():
+            px = t['prices'].get(s) or self.prices.get(s)
+            if px and w > 0:
+                spot[s] = spot.get(s, 0.0) + w * t['equity'] / px
+        for s, p in self.state['carry']['positions'].items():
+            spot[s] = spot.get(s, 0.0) + p['qty']
+            short[s] = p['qty']
+        return spot, short
 
     # -- carry -----------------------------------------------------------------------
     def _settle_carry(self, quotes: dict, now: int) -> None:
@@ -242,4 +265,4 @@ class MixPortfolio:
                     [dict(ts=x['ts'], sleeve='trend', action='BALANS', symbol=x['symbol'], amount=x['value'],
                           note=f"{x['from_w'] * 100:.1f}% → {x['to_w'] * 100:.1f}%") for x in t['trades'][:20]],
                     curve=[h[:2] for h in st['history']], btc_curve=btc_curve,
-                    error=self.error or t['error'])
+                    error=self.error or t['error'], live=self.live.summary())
