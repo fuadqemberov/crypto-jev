@@ -35,13 +35,7 @@ işlədin. Şəbəkəsiz sınaq: `DEMO_MODE=true` — sintetik futures bazarı, 
 | 40% | Trend portfeli | `app/trend_paper.py`: yalnız LONG, 6h Donçian ansamblı, yarım ölçü, hər 6 saatdan bir. |
 | 20% | DCA | BTC + ETH 50/50, 12 həftə ərzində hər həftə bərabər alış, sonra saxlanılır. |
 
-Vəziyyət: `data/mix.json` və `data/mix-trend.json` (silsəniz sıfırdan başlayır).
-
-**Real ticarət** (`app/live.py`): `.env`-də `LIVE_TRADING=true`, `BINANCE_API_KEY`, `BINANCE_API_SECRET` olduqda
-bot virtual portfelin qərarlarını Binance hesabında market orderlərlə təkrarlayır (spot: DCA + trend + carry spot ayağı;
-USDT-M futures: carry short-ları, 2×, One-way mode). Yalnız özü aldığını satır. Limitlər: `LIVE_CAPITAL` (default 2000),
-bir order ≤ 25%, `LIVE_MAX_LOSS_PCT` (default 30) — portfel bu qədər düşsə yeni alış/short dayanır. API açarında
-çıxarma (withdraw) icazəsini heç vaxt aktiv etməyin. Real pul itirə bilərsiniz.
+Vəziyyət: `data/mix.json` və `data/mix-trend.json` (silsəniz sıfırdan başlayır). Yalnız virtual — real order yoxdur.
 
 ## Necə işləyir
 

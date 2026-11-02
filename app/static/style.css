@@ -122,5 +122,3 @@ td.empty { text-align: center; color: var(--muted); padding: 28px; }
 .panel.trend .kpis, .panel.trend .grid-2 { padding: 12px 16px 0; margin-bottom: 12px; }
 .panel.trend details { padding: 0 16px 12px; }
 .panel.trend summary { cursor: pointer; color: var(--muted, #848e9c); font-size: 12px; padding: 6px 0; }
-.panel.trend .live { padding: 0 16px 12px; }
-.panel.trend .live h3 { font-size: 14px; margin: 8px 0; color: #f6465d; }
