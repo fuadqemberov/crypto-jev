@@ -232,31 +232,33 @@ function renderCurves(curves) {
   lineChart('ov-chart', datasets);
 }
 
-/* ---------- trend portfolio (forward test) ---------- */
-function renderTrend(t) {
-  const started = isNum(t.started_at);
-  const days = started ? Math.max(0, (Date.now() + state.clockOffset - t.started_at) / 86400000) : 0;
-  $('tr-note').textContent = started
-    ? `${days.toFixed(1)} / 90 gün · parametrlər donmuşdur · növbəti yeniləmə ${when(t.next_run)}`
-    : 'ilk 6 saatlıq şamın bağlanması gözlənilir (UTC 00/06/12/18)';
-  if (t.error) $('tr-note').textContent += ` · xəta: ${t.error.message}`;
-  $('tr-kpis').innerHTML = [
-    ['Balans', money(t.equity), `başlanğıc ${money(t.capital)}`],
-    ['Gəlir', `<span class="${cls(t.return_pct)}">${pct(t.return_pct)}</span>`, isNum(t.btc_return_pct) ? `BTC eyni dövrdə ${pct(t.btc_return_pct)}` : 'BTC müqayisəsi başlayanda'],
-    ['Maks. geriləmə', `<span class="neg">-${num(t.max_dd_pct)}%</span>`, 'backtest gözləntisi ≈ 19%'],
-    ['Bazarda', `${num(t.gross * 100, 0)}%`, `${t.positions.length} coin · yalnız LONG`],
-    ['Komissiya / funding', `${money(t.fees)} / ${money(t.funding)}`, `${t.fills} əməliyyat`],
+/* ---------- mixed portfolio: carry + trend + DCA ---------- */
+function renderMix(m) {
+  const started = isNum(m.started_at);
+  const days = started ? Math.max(0, (Date.now() + state.clockOffset - m.started_at) / 86400000) : 0;
+  $('mx-note').textContent = (started ? `${days.toFixed(1)} gündür işləyir · 40% funding arbitrajı · 40% trend · 20% DCA` : 'başlayır…') +
+    (m.error ? ` · xəta: ${m.error.message}` : '');
+  $('mx-kpis').innerHTML = [
+    ['Balans', money(m.equity), `başlanğıc ${money(m.capital)}`],
+    ['Gəlir', `<span class="${cls(m.return_pct)}">${pct(m.return_pct)}</span>`, isNum(m.btc_return_pct) ? `BTC eyni dövrdə ${pct(m.btc_return_pct)}` : ''],
+    ['Maks. geriləmə', `<span class="neg">-${num(m.max_dd_pct)}%</span>`, 'saatlıq balansa görə'],
   ].map(([a, v, sub]) => `<div class="kpi"><small>${a}</small><strong>${v}</strong><span>${sub}</span></div>`).join('');
-  $('tr-positions').innerHTML = '<thead><tr><th class="l">Coin</th><th>Pay</th><th>Dəyər</th><th>Qiymət</th></tr></thead><tbody>' +
-    (t.positions.length ? t.positions.map((p) => `<tr><td class="l"><b>${esc(p.symbol)}</b></td><td>${num(p.weight * 100, 1)}%</td><td>${money(p.value)}</td><td>${price(p.price)}</td></tr>`).join('')
-      : '<tr><td colspan="4" class="empty">Mövqe yoxdur — trend olmayanda portfel nağd qalır</td></tr>') + '</tbody>';
-  $('tr-trades').innerHTML = '<thead><tr><th>Vaxt</th><th class="l">Coin</th><th>Pay: əvvəl → sonra</th><th>Alış / satış</th><th>Qiymət</th><th>Komissiya</th></tr></thead><tbody>' +
-    (t.trades.length ? t.trades.map((x) => `<tr><td>${when(x.ts)}</td><td class="l">${esc(x.symbol)}</td><td>${num(x.from_w * 100, 1)}% → ${num(x.to_w * 100, 1)}%</td>
-      <td class="${cls(x.value)}">${money(x.value, true)}</td><td>${price(x.price)}</td><td>${money(x.fee)}</td></tr>`).join('')
-      : '<tr><td colspan="6" class="empty">Hələ əməliyyat yoxdur</td></tr>') + '</tbody>';
-  const ds = [{ label: 'Trend portfeli', data: series(t.curve), borderColor: '#f0b90b', backgroundColor: '#f0b90b', borderWidth: 2 }];
-  if (t.btc_curve.length) ds.push({ label: 'BTC al və saxla', data: series(t.btc_curve), borderColor: '#9aa3ae', backgroundColor: '#9aa3ae', borderDash: [6, 4] });
-  lineChart('tr-chart', ds);
+  $('mx-sleeves').innerHTML = '<thead><tr><th class="l">Hissə</th><th>Pay</th><th>Balans</th><th>Gəlir</th><th class="l">Vəziyyət</th></tr></thead><tbody>' +
+    m.sleeves.map((s) => `<tr><td class="l"><b>${esc(s.name)}</b></td><td>${num(s.share * 100, 0)}%</td><td>${money(s.equity)}</td>
+      <td class="${cls(s.return_pct)}">${pct(s.return_pct)}</td><td class="l muted">${esc(s.note)}</td></tr>`).join('') + '</tbody>';
+  $('mx-carry').innerHTML = '<thead><tr><th class="l">Funding coin</th><th>Nominal</th><th>Cari funding / 8s</th><th>3 gün orta</th><th>Qazanılıb</th></tr></thead><tbody>' +
+    (m.carry_positions.length ? m.carry_positions.map((p) => `<tr><td class="l"><b>${esc(p.symbol)}</b></td><td>${money(p.notional)}</td>
+      <td class="${cls(p.rate)}">${num(p.rate * 100, 4)}%</td><td>${num(p.avg_funding * 100, 4)}%</td><td class="${cls(p.earned)}">${money(p.earned, true)}</td></tr>`).join('')
+      : '<tr><td colspan="5" class="empty">Funding kifayət qədər yüksək deyil — pul nağd gözləyir</td></tr>') + '</tbody>';
+  $('mx-trend').innerHTML = '<thead><tr><th class="l">Trend coin</th><th>Pay</th><th>Dəyər</th></tr></thead><tbody>' +
+    (m.trend_positions.length ? m.trend_positions.map((p) => `<tr><td class="l"><b>${esc(p.symbol)}</b></td><td>${num(p.weight * 100, 1)}%</td><td>${money(p.value)}</td></tr>`).join('')
+      : '<tr><td colspan="3" class="empty">Trend yoxdur — nağd</td></tr>') + '</tbody>';
+  $('mx-log').innerHTML = '<thead><tr><th>Vaxt</th><th class="l">Hissə</th><th class="l">Əməliyyat</th><th class="l">Coin</th><th>Məbləğ</th><th class="l">Qeyd</th></tr></thead><tbody>' +
+    (m.log.length ? m.log.map((x) => `<tr><td>${when(x.ts)}</td><td class="l">${esc(x.sleeve)}</td><td class="l">${esc(x.action)}</td><td class="l">${esc(x.symbol)}</td>
+      <td>${money(x.amount)}</td><td class="l muted">${esc(x.note)}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">Hələ əməliyyat yoxdur</td></tr>') + '</tbody>';
+  const ds = [{ label: 'Qarışıq portfel', data: series(m.curve), borderColor: '#f0b90b', backgroundColor: '#f0b90b', borderWidth: 2 }];
+  if (m.btc_curve.length) ds.push({ label: 'BTC al və saxla', data: series(m.btc_curve), borderColor: '#9aa3ae', backgroundColor: '#9aa3ae', borderDash: [6, 4] });
+  lineChart('mx-chart', ds);
 }
 
 /* ---------- strategy section ---------- */
@@ -355,7 +357,7 @@ async function refresh(force = false) {
         state.curvesAt = Date.now();
       }
       renderCurves(state.curves);
-      try { renderTrend(await getJSON('/api/trend')); } catch (e) { $('tr-note').textContent = 'trend məlumatı yoxdur'; }
+      try { renderMix(await getJSON('/api/mix')); } catch (e) { $('mx-note').textContent = 'portfel məlumatı yoxdur'; }
     }
   } catch (err) {
     $('notice').textContent = 'Serverlə əlaqə yoxdur: ' + err.message;
