@@ -174,9 +174,19 @@ class LiveMirror:
         usdt = next((b for b in bal if b['asset'] == 'USDT'), {})
         self.wallet = float(usdt.get('balance', 0) or 0)
         self.available = float(usdt.get('availableBalance', 0) or 0)
+        if self.mode == 'dry':                       # preview as if LIVE_CAPITAL were deposited
+            self.available = self.capital
+        if st.get('mode') != self.mode or (self.mode == 'real' and not st['start_wallet'] and self.wallet > 0):
+            # new mode (dry → real) or first deposit: start fresh; dry "positions" are never closed for real
+            for sym, mine in st['positions'].items():
+                self._done(f"{sym}@{mine['virtual_opened_at']}")
+            st['positions'] = {}
+            st['started_at'] = None
+            st['mode'] = self.mode
         if st['started_at'] is None:
             st['started_at'] = int(time.time() * 1000)
             st['start_wallet'] = self.wallet
+            st['realized'] = 0.0
             self._log('START', '-', f'futures balansı {self.wallet:.2f} USDT, kapital limiti {self.capital:.2f} $')
         start = st['start_wallet'] or 0
         self.halted = bool(start) and self.wallet < start * (1 - self.max_loss_pct / 100)
