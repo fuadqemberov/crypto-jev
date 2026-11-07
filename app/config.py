@@ -30,6 +30,7 @@ class Settings:
     signal_exits: str = 'all'            # all: every rule exits on its opposite signal; auto: only own-exit rules; none
     cooldown_bars: int = 0               # after a close, the same strategy waits this many candles on that coin; 0 = off
     max_hold_hours: float = 0.0          # close a position held longer than this; 0 = off
+    strategies: str = ''                 # comma-separated strategy keys to run; '' = all 26
     fee_rate: float = 0.0005             # taker fee per side (Binance USDT-M default 0.05%)
     slippage_rate: float = 0.0005
     maint_margin_rate: float = 0.005     # maintenance margin used for the liquidation check
@@ -95,6 +96,7 @@ class Settings:
             max_leverage=int(env('MAX_LEVERAGE', '100')),
             max_cost_r=float(env('MAX_COST_R', '0.10')), signal_exits=env('SIGNAL_EXITS', 'all').strip().lower(),
             cooldown_bars=int(env('COOLDOWN_BARS', '0')), max_hold_hours=float(env('MAX_HOLD_HOURS', '0')),
+            strategies=env('STRATEGIES', 'macd').strip(),
             fee_rate=float(env('FEE_RATE', '0.0005')), slippage_rate=float(env('SLIPPAGE_RATE', '0.0005')),
             maint_margin_rate=float(env('MAINT_MARGIN_RATE', '0.005')),
             history_bars=int(env('HISTORY_BARS', '500')),

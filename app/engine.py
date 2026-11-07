@@ -55,7 +55,10 @@ class Engine:
         self.settings = settings
         self.market = market
         self.store = store
-        self.strategies = list(strategies or STRATEGIES)
+        wanted = [k.strip() for k in settings.strategies.split(',') if k.strip()]
+        self.strategies = list(strategies or ([s for s in STRATEGIES if s.key in wanted] if wanted else STRATEGIES))
+        if not self.strategies:
+            raise ValueError(f'STRATEGIES={settings.strategies!r}: heç bir strategiya tapılmadı')
         self.by_key = {s.key: s for s in self.strategies}
         self.interval = settings.interval_ms
         self.ledger = Ledger(settings, store, list(self.by_key), market.now_ms())

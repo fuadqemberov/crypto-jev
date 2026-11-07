@@ -25,17 +25,10 @@ Tək proses: engine və dashboard birlikdədir; `--workers 1` saxlayın.
 işlədin. Şəbəkəsiz sınaq: `DEMO_MODE=true` — sintetik futures bazarı, sürətləndirilmiş saat
 (hər `DEMO_CANDLE_SECONDS` saniyədə bir şam), ayrıca `data/demo-futures.db`.
 
-## Qarışıq portfel (virtual 2000 $)
+## Hansı strategiyalar işləyir
 
-`app/mix.py` — araşdırmada ən yaxşı nəticə verən üç yanaşma bir hesabda, dashboard-un yuxarısında:
-
-| Pay | Hissə | Necə işləyir |
-|---|---|---|
-| 40% | Funding arbitrajı | Eyni coin-də spot LONG + perpetual SHORT (qiymət riski sıfırlanır); short funding toplayır. Ən likvid 20 coin-dən son 3 gündə orta funding-i ən yüksək olan 5-i (≥ 0.005% / 8 s); funding mənfi olanda (ən azı 3 gün saxladıqdan sonra) bağlanır. |
-| 40% | Trend portfeli | `app/trend_paper.py`: yalnız LONG, 6h Donçian ansamblı, yarım ölçü, hər 6 saatdan bir. |
-| 20% | DCA | BTC + ETH 50/50, 12 həftə ərzində hər həftə bərabər alış, sonra saxlanılır. |
-
-Vəziyyət: `data/mix.json` və `data/mix-trend.json` (silsəniz sıfırdan başlayır). Yalnız virtual — real order yoxdur.
+`.env`-də `STRATEGIES` (default `macd`) — vergüllə ayrılmış açarlar, məs. `STRATEGIES=macd,williams,psar`;
+boş qoyulsa (`STRATEGIES=`) 26-sının hamısı işləyir.
 
 ## Real hesab — bir strategiyanın güzgüsü (`app/live_mirror.py`)
 

@@ -22,7 +22,6 @@ from .engine import Engine
 from .market import BinanceMarket
 from .store import Store
 from .live_mirror import LiveMirror
-from .mix import MixPortfolio
 
 STATIC = Path(__file__).parent / 'static'
 CONTROL_PATH = '/api/control/entries'
@@ -47,11 +46,9 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, mark
         async with httpx.AsyncClient(timeout=httpx.Timeout(20), follow_redirects=False) as client:
             source = market or (DemoMarket(settings) if settings.demo else BinanceMarket(settings, client))
             app.state.engine = Engine(settings, source, store)
-            app.state.mix = MixPortfolio(settings, source)
             app.state.live = LiveMirror(app.state.engine, settings.data_dir)
             workers = [asyncio.create_task(app.state.engine.run())] if start_worker else []
             if start_worker and not getattr(source, 'demo', False):
-                workers.append(asyncio.create_task(app.state.mix.run()))
                 if app.state.live.enabled:
                     workers.append(asyncio.create_task(app.state.live.run()))
             try:
@@ -120,10 +117,6 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, mark
     @app.get('/api/live')
     async def live() -> dict[str, Any]:
         return app.state.live.summary()
-
-    @app.get('/api/mix')
-    async def mix() -> dict[str, Any]:
-        return app.state.mix.summary()
 
     @app.post(CONTROL_PATH)
     async def entries(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:

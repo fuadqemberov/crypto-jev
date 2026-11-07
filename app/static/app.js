@@ -255,35 +255,6 @@ function renderLive(l) {
       <td>${x.qty != null ? esc(String(x.qty)) : ''}</td><td>${isNum(x.price) ? price(x.price) : ''}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">Hələ heç nə yoxdur</td></tr>') + '</tbody>';
 }
 
-/* ---------- mixed portfolio: carry + trend + DCA ---------- */
-function renderMix(m) {
-  const started = isNum(m.started_at);
-  const days = started ? Math.max(0, (Date.now() + state.clockOffset - m.started_at) / 86400000) : 0;
-  $('mx-note').textContent = (started ? `${days.toFixed(1)} gündür işləyir · 40% funding arbitrajı · 40% trend · 20% DCA` : 'başlayır…') +
-    (m.error ? ` · xəta: ${m.error.message}` : '');
-  $('mx-kpis').innerHTML = [
-    ['Balans', money(m.equity), `başlanğıc ${money(m.capital)}`],
-    ['Gəlir', `<span class="${cls(m.return_pct)}">${pct(m.return_pct)}</span>`, isNum(m.btc_return_pct) ? `BTC eyni dövrdə ${pct(m.btc_return_pct)}` : ''],
-    ['Maks. geriləmə', `<span class="neg">-${num(m.max_dd_pct)}%</span>`, 'saatlıq balansa görə'],
-  ].map(([a, v, sub]) => `<div class="kpi"><small>${a}</small><strong>${v}</strong><span>${sub}</span></div>`).join('');
-  $('mx-sleeves').innerHTML = '<thead><tr><th class="l">Hissə</th><th>Pay</th><th>Balans</th><th>Gəlir</th><th class="l">Vəziyyət</th></tr></thead><tbody>' +
-    m.sleeves.map((s) => `<tr><td class="l"><b>${esc(s.name)}</b></td><td>${num(s.share * 100, 0)}%</td><td>${money(s.equity)}</td>
-      <td class="${cls(s.return_pct)}">${pct(s.return_pct)}</td><td class="l muted">${esc(s.note)}</td></tr>`).join('') + '</tbody>';
-  $('mx-carry').innerHTML = '<thead><tr><th class="l">Funding coin</th><th>Nominal</th><th>Cari funding / 8s</th><th>3 gün orta</th><th>Qazanılıb</th></tr></thead><tbody>' +
-    (m.carry_positions.length ? m.carry_positions.map((p) => `<tr><td class="l"><b>${esc(p.symbol)}</b></td><td>${money(p.notional)}</td>
-      <td class="${cls(p.rate)}">${num(p.rate * 100, 4)}%</td><td>${num(p.avg_funding * 100, 4)}%</td><td class="${cls(p.earned)}">${money(p.earned, true)}</td></tr>`).join('')
-      : '<tr><td colspan="5" class="empty">Funding kifayət qədər yüksək deyil — pul nağd gözləyir</td></tr>') + '</tbody>';
-  $('mx-trend').innerHTML = '<thead><tr><th class="l">Trend coin</th><th>Pay</th><th>Dəyər</th></tr></thead><tbody>' +
-    (m.trend_positions.length ? m.trend_positions.map((p) => `<tr><td class="l"><b>${esc(p.symbol)}</b></td><td>${num(p.weight * 100, 1)}%</td><td>${money(p.value)}</td></tr>`).join('')
-      : '<tr><td colspan="3" class="empty">Trend yoxdur — nağd</td></tr>') + '</tbody>';
-  $('mx-log').innerHTML = '<thead><tr><th>Vaxt</th><th class="l">Hissə</th><th class="l">Əməliyyat</th><th class="l">Coin</th><th>Məbləğ</th><th class="l">Qeyd</th></tr></thead><tbody>' +
-    (m.log.length ? m.log.map((x) => `<tr><td>${when(x.ts)}</td><td class="l">${esc(x.sleeve)}</td><td class="l">${esc(x.action)}</td><td class="l">${esc(x.symbol)}</td>
-      <td>${money(x.amount)}</td><td class="l muted">${esc(x.note)}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">Hələ əməliyyat yoxdur</td></tr>') + '</tbody>';
-  const ds = [{ label: 'Qarışıq portfel', data: series(m.curve), borderColor: '#f0b90b', backgroundColor: '#f0b90b', borderWidth: 2 }];
-  if (m.btc_curve.length) ds.push({ label: 'BTC al və saxla', data: series(m.btc_curve), borderColor: '#9aa3ae', backgroundColor: '#9aa3ae', borderDash: [6, 4] });
-  lineChart('mx-chart', ds);
-}
-
 /* ---------- strategy section ---------- */
 function renderDetail(d) {
   const s = d.summary;
@@ -381,7 +352,6 @@ async function refresh(force = false) {
       }
       renderCurves(state.curves);
       try { renderLive(await getJSON('/api/live')); } catch (e) { /* mirror off */ }
-      try { renderMix(await getJSON('/api/mix')); } catch (e) { $('mx-note').textContent = 'portfel məlumatı yoxdur'; }
     }
   } catch (err) {
     $('notice').textContent = 'Serverlə əlaqə yoxdur: ' + err.message;
