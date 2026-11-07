@@ -232,6 +232,29 @@ function renderCurves(curves) {
   lineChart('ov-chart', datasets);
 }
 
+/* ---------- real account mirror ---------- */
+function renderLive(l) {
+  $('lv-panel').hidden = !l || l.mode === 'off';
+  if (!l || l.mode === 'off') return;
+  const real = l.mode === 'real';
+  $('lv-title').innerHTML = real ? `🔴 REAL Binance hesabı — ${esc(l.strategy.toUpperCase())}` : `🟡 Quru rejim (order göndərilmir) — ${esc(l.strategy.toUpperCase())}`;
+  $('lv-note').textContent = (l.halted ? `ZƏRƏR LİMİTİ (${num(l.max_loss_pct, 0)}%) — yeni mövqe açılmır · ` : '') + (l.error ? `xəta: ${l.error.message}` : `kapital limiti ${money(l.capital)}`);
+  const change = isNum(l.wallet) && isNum(l.start_wallet) && l.start_wallet ? (l.wallet / l.start_wallet - 1) * 100 : null;
+  $('lv-kpis').innerHTML = [
+    ['Futures balansı', isNum(l.wallet) ? money(l.wallet) : '—', isNum(l.start_wallet) ? `başlanğıc ${money(l.start_wallet)}` : ''],
+    ['Dəyişmə', isNum(change) ? `<span class="${cls(change)}">${pct(change)}</span>` : '—', 'başlanğıcdan bəri'],
+    ['Açıq mövqe', `${l.positions.length}`, `mövcud ${isNum(l.available) ? money(l.available) : '—'}`],
+    ['Bağlanmış PnL', `<span class="${cls(l.realized)}">${money(l.realized, true)}</span>`, real ? 'komissiyasız, təxmini' : 'quru rejim, təxmini'],
+  ].map(([a, v, sub]) => `<div class="kpi"><small>${a}</small><strong>${v}</strong><span>${sub}</span></div>`).join('');
+  $('lv-pos').innerHTML = '<thead><tr><th class="l">Coin</th><th class="l">Tərəf</th><th>Leverage</th><th>Miqdar</th><th>Giriş</th><th>Stop</th><th>Cari</th><th>PnL</th></tr></thead><tbody>' +
+    (l.positions.length ? l.positions.map((p) => `<tr><td class="l"><b>${esc(p.symbol)}</b></td><td class="l">${esc(p.side)}</td><td>${p.leverage}x</td><td>${esc(String(p.qty))}</td>
+      <td>${price(p.entry)}</td><td>${p.stop ? price(Number(p.stop)) : '—'}</td><td>${price(p.price)}</td><td class="${cls(p.pnl)}">${money(p.pnl, true)}</td></tr>`).join('')
+      : '<tr><td colspan="8" class="empty">Açıq mövqe yoxdur — MACD yeni siqnal verəndə açılacaq</td></tr>') + '</tbody>';
+  $('lv-log').innerHTML = '<thead><tr><th>Vaxt</th><th class="l">Əməliyyat</th><th class="l">Coin</th><th class="l">Qeyd</th><th>Miqdar</th><th>Qiymət</th></tr></thead><tbody>' +
+    (l.log.length ? l.log.map((x) => `<tr><td>${when(x.ts)}</td><td class="l">${esc(x.action)}</td><td class="l">${esc(x.symbol)}</td><td class="l muted">${esc(x.note || '')}</td>
+      <td>${x.qty != null ? esc(String(x.qty)) : ''}</td><td>${isNum(x.price) ? price(x.price) : ''}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">Hələ heç nə yoxdur</td></tr>') + '</tbody>';
+}
+
 /* ---------- mixed portfolio: carry + trend + DCA ---------- */
 function renderMix(m) {
   const started = isNum(m.started_at);
@@ -357,6 +380,7 @@ async function refresh(force = false) {
         state.curvesAt = Date.now();
       }
       renderCurves(state.curves);
+      try { renderLive(await getJSON('/api/live')); } catch (e) { /* mirror off */ }
       try { renderMix(await getJSON('/api/mix')); } catch (e) { $('mx-note').textContent = 'portfel məlumatı yoxdur'; }
     }
   } catch (err) {

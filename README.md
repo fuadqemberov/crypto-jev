@@ -37,6 +37,15 @@ işlədin. Şəbəkəsiz sınaq: `DEMO_MODE=true` — sintetik futures bazarı, 
 
 Vəziyyət: `data/mix.json` və `data/mix-trend.json` (silsəniz sıfırdan başlayır). Yalnız virtual — real order yoxdur.
 
+## Real hesab — bir strategiyanın güzgüsü (`app/live_mirror.py`)
+
+`.env`-də `LIVE_MODE=dry` və ya `real`, `LIVE_STRATEGY=macd`, `LIVE_CAPITAL` (məs. 100), `BINANCE_API_KEY`, `BINANCE_API_SECRET`.
+Virtual MACD hesabı yeni mövqe açanda eyni coin/istiqamət/leverage ilə Binance USDT-M futures-də isolated marja ilə açılır
+(miqdar = virtual × LIVE_CAPITAL / 2000), Binance-də qoruyucu STOP_MARKET qoyulur, virtual bağlayanda real da bağlanır.
+`dry` rejimi heç bir order göndərmir — yalnız hesabı yoxlayır və göndərəcəyi orderləri jurnala yazır. Bot başlamazdan əvvəl açılmış
+virtual mövqelər kopyalanmır; Binance minimumundan kiçik orderlər atlanır; balans `LIVE_MAX_LOSS_PCT` (30%) düşsə yeni mövqe açılmır.
+API açarında yalnız Futures icazəsi, çıxarma (withdraw) YOX, IP məhdudiyyəti — serverin IP-si. Real pul itirə bilərsiniz.
+
 ## Necə işləyir
 
 | Addım | Təsvir |

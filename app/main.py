@@ -21,6 +21,7 @@ from .demo import DemoMarket
 from .engine import Engine
 from .market import BinanceMarket
 from .store import Store
+from .live_mirror import LiveMirror
 from .mix import MixPortfolio
 
 STATIC = Path(__file__).parent / 'static'
@@ -47,9 +48,12 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, mark
             source = market or (DemoMarket(settings) if settings.demo else BinanceMarket(settings, client))
             app.state.engine = Engine(settings, source, store)
             app.state.mix = MixPortfolio(settings, source)
+            app.state.live = LiveMirror(app.state.engine, settings.data_dir)
             workers = [asyncio.create_task(app.state.engine.run())] if start_worker else []
             if start_worker and not getattr(source, 'demo', False):
                 workers.append(asyncio.create_task(app.state.mix.run()))
+                if app.state.live.enabled:
+                    workers.append(asyncio.create_task(app.state.live.run()))
             try:
                 yield
             finally:
@@ -112,6 +116,10 @@ def create_app(settings: Settings | None = None, start_worker: bool = True, mark
     @app.get('/api/curves')
     async def curves() -> dict[str, Any]:
         return app.state.engine.curves()
+
+    @app.get('/api/live')
+    async def live() -> dict[str, Any]:
+        return app.state.live.summary()
 
     @app.get('/api/mix')
     async def mix() -> dict[str, Any]:
