@@ -27,7 +27,7 @@ işlədin. Şəbəkəsiz sınaq: `DEMO_MODE=true` — sintetik futures bazarı, 
 
 ## Hansı strategiyalar işləyir
 
-`.env`-də `STRATEGIES` (default `macd`) — vergüllə ayrılmış açarlar, məs. `STRATEGIES=macd,williams,psar`;
+`.env`-də `STRATEGIES` (default `williams,rr_2to1`) — vergüllə ayrılmış açarlar, məs. `STRATEGIES=macd,williams,psar`;
 boş qoyulsa (`STRATEGIES=`) 26-sının hamısı işləyir.
 
 ## Real hesab — bir strategiyanın güzgüsü (`app/live_mirror.py`)

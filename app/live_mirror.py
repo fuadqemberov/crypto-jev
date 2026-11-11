@@ -59,7 +59,7 @@ class LiveMirror:
     def __init__(self, engine: Any, data_dir: Path, client: httpx.AsyncClient | None = None) -> None:
         self.engine = engine
         self.mode = os.getenv('LIVE_MODE', 'off').strip().lower()
-        self.key = os.getenv('LIVE_STRATEGY', 'macd').strip()
+        self.key = os.getenv('LIVE_STRATEGY', 'williams').strip()
         self.api_key = os.getenv('BINANCE_API_KEY', '').strip()
         self.secret = os.getenv('BINANCE_API_SECRET', '').strip()
         self.capital = float(os.getenv('LIVE_CAPITAL', '100'))

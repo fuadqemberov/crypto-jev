@@ -96,7 +96,7 @@ class Settings:
             max_leverage=int(env('MAX_LEVERAGE', '100')),
             max_cost_r=float(env('MAX_COST_R', '0.10')), signal_exits=env('SIGNAL_EXITS', 'all').strip().lower(),
             cooldown_bars=int(env('COOLDOWN_BARS', '0')), max_hold_hours=float(env('MAX_HOLD_HOURS', '0')),
-            strategies=env('STRATEGIES', 'macd').strip(),
+            strategies=env('STRATEGIES', 'williams,rr_2to1').strip(),
             fee_rate=float(env('FEE_RATE', '0.0005')), slippage_rate=float(env('SLIPPAGE_RATE', '0.0005')),
             maint_margin_rate=float(env('MAINT_MARGIN_RATE', '0.005')),
             history_bars=int(env('HISTORY_BARS', '500')),
